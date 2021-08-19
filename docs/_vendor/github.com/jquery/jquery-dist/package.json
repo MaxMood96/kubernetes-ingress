@@ -59,7 +59,7 @@
     "qunit": "2.9.2",
     "raw-body": "2.3.3",
     "requirejs": "2.3.6",
-    "sinon": "2.3.7",
+    "sinon": "11.1.2",
     "sizzle": "2.3.6",
     "strip-json-comments": "2.0.1",
     "testswarm": "1.1.2",
