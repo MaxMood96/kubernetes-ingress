@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/prometheus/client_golang/prometheus"
 	networking "k8s.io/api/networking/v1"
 	meta_v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,7 +42,7 @@ func createTestConfigurator() (*Configurator, error) {
 
 	manager := nginx.NewFakeManager("/etc/nginx")
 
-	cnf, err := NewConfigurator(manager, createTestStaticConfigParams(), NewDefaultConfigParams(), templateExecutor, templateExecutorV2, false, false, nil, false, nil, false), nil
+	cnf, err := NewConfigurator(manager, createTestStaticConfigParams(), NewDefaultConfigParams(false), templateExecutor, templateExecutorV2, false, false, nil, false, nil, false), nil
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +65,7 @@ func createTestConfiguratorInvalidIngressTemplate() (*Configurator, error) {
 
 	manager := nginx.NewFakeManager("/etc/nginx")
 
-	cnf, err := NewConfigurator(manager, createTestStaticConfigParams(), NewDefaultConfigParams(), templateExecutor, &version2.TemplateExecutor{}, false, false, nil, false, nil, false), nil
+	cnf, err := NewConfigurator(manager, createTestStaticConfigParams(), NewDefaultConfigParams(false), templateExecutor, &version2.TemplateExecutor{}, false, false, nil, false, nil, false), nil
 	if err != nil {
 		return nil, err
 	}
@@ -75,6 +76,7 @@ func createTestConfiguratorInvalidIngressTemplate() (*Configurator, error) {
 }
 
 func TestAddOrUpdateIngress(t *testing.T) {
+	t.Parallel()
 	cnf, err := createTestConfigurator()
 	if err != nil {
 		t.Errorf("Failed to create a test configurator: %v", err)
@@ -97,6 +99,7 @@ func TestAddOrUpdateIngress(t *testing.T) {
 }
 
 func TestAddOrUpdateMergeableIngress(t *testing.T) {
+	t.Parallel()
 	cnf, err := createTestConfigurator()
 	if err != nil {
 		t.Errorf("Failed to create a test configurator: %v", err)
@@ -119,6 +122,7 @@ func TestAddOrUpdateMergeableIngress(t *testing.T) {
 }
 
 func TestAddOrUpdateIngressFailsWithInvalidIngressTemplate(t *testing.T) {
+	t.Parallel()
 	cnf, err := createTestConfiguratorInvalidIngressTemplate()
 	if err != nil {
 		t.Errorf("Failed to create a test configurator: %v", err)
@@ -136,6 +140,7 @@ func TestAddOrUpdateIngressFailsWithInvalidIngressTemplate(t *testing.T) {
 }
 
 func TestAddOrUpdateMergeableIngressFailsWithInvalidIngressTemplate(t *testing.T) {
+	t.Parallel()
 	cnf, err := createTestConfiguratorInvalidIngressTemplate()
 	if err != nil {
 		t.Errorf("Failed to create a test configurator: %v", err)
@@ -153,6 +158,7 @@ func TestAddOrUpdateMergeableIngressFailsWithInvalidIngressTemplate(t *testing.T
 }
 
 func TestUpdateEndpoints(t *testing.T) {
+	t.Parallel()
 	cnf, err := createTestConfigurator()
 	if err != nil {
 		t.Errorf("Failed to create a test configurator: %v", err)
@@ -173,6 +179,7 @@ func TestUpdateEndpoints(t *testing.T) {
 }
 
 func TestUpdateEndpointsMergeableIngress(t *testing.T) {
+	t.Parallel()
 	cnf, err := createTestConfigurator()
 	if err != nil {
 		t.Errorf("Failed to create a test configurator: %v", err)
@@ -193,6 +200,7 @@ func TestUpdateEndpointsMergeableIngress(t *testing.T) {
 }
 
 func TestUpdateEndpointsFailsWithInvalidTemplate(t *testing.T) {
+	t.Parallel()
 	cnf, err := createTestConfiguratorInvalidIngressTemplate()
 	if err != nil {
 		t.Errorf("Failed to create a test configurator: %v", err)
@@ -208,6 +216,7 @@ func TestUpdateEndpointsFailsWithInvalidTemplate(t *testing.T) {
 }
 
 func TestUpdateEndpointsMergeableIngressFailsWithInvalidTemplate(t *testing.T) {
+	t.Parallel()
 	cnf, err := createTestConfiguratorInvalidIngressTemplate()
 	if err != nil {
 		t.Errorf("Failed to create a test configurator: %v", err)
@@ -223,6 +232,7 @@ func TestUpdateEndpointsMergeableIngressFailsWithInvalidTemplate(t *testing.T) {
 }
 
 func TestGetVirtualServerConfigFileName(t *testing.T) {
+	t.Parallel()
 	vs := conf_v1.VirtualServer{
 		ObjectMeta: meta_v1.ObjectMeta{
 			Namespace: "test",
@@ -239,6 +249,7 @@ func TestGetVirtualServerConfigFileName(t *testing.T) {
 }
 
 func TestGetFileNameForVirtualServerFromKey(t *testing.T) {
+	t.Parallel()
 	key := "default/cafe"
 
 	expected := "vs_default_cafe"
@@ -250,6 +261,7 @@ func TestGetFileNameForVirtualServerFromKey(t *testing.T) {
 }
 
 func TestGetFileNameForTransportServer(t *testing.T) {
+	t.Parallel()
 	transportServer := &conf_v1alpha1.TransportServer{
 		ObjectMeta: meta_v1.ObjectMeta{
 			Namespace: "default",
@@ -266,6 +278,7 @@ func TestGetFileNameForTransportServer(t *testing.T) {
 }
 
 func TestGetFileNameForTransportServerFromKey(t *testing.T) {
+	t.Parallel()
 	key := "default/test-server"
 
 	expected := "ts_default_test-server"
@@ -277,6 +290,7 @@ func TestGetFileNameForTransportServerFromKey(t *testing.T) {
 }
 
 func TestGenerateNamespaceNameKey(t *testing.T) {
+	t.Parallel()
 	objectMeta := &meta_v1.ObjectMeta{
 		Namespace: "default",
 		Name:      "test-server",
@@ -291,6 +305,7 @@ func TestGenerateNamespaceNameKey(t *testing.T) {
 }
 
 func TestGenerateTLSPassthroughHostsConfig(t *testing.T) {
+	t.Parallel()
 	tlsPassthroughPairs := map[string]tlsPassthroughPair{
 		"default/ts-1": {
 			Host:       "one.example.com",
@@ -314,6 +329,7 @@ func TestGenerateTLSPassthroughHostsConfig(t *testing.T) {
 }
 
 func TestAddInternalRouteConfig(t *testing.T) {
+	t.Parallel()
 	cnf, err := createTestConfigurator()
 	if err != nil {
 		t.Errorf("Failed to create a test configurator: %v", err)
@@ -337,6 +353,7 @@ func TestAddInternalRouteConfig(t *testing.T) {
 }
 
 func TestFindRemovedKeys(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		currentKeys []string
 		newKeys     map[string]bool
@@ -701,6 +718,7 @@ func TestUpdateIngressMetricsLabels(t *testing.T) {
 }
 
 func TestUpdateVirtualServerMetricsLabels(t *testing.T) {
+	t.Parallel()
 	cnf, err := createTestConfigurator()
 	if err != nil {
 		t.Fatalf("Failed to create a test configurator: %v", err)
@@ -870,6 +888,7 @@ func TestUpdateVirtualServerMetricsLabels(t *testing.T) {
 }
 
 func TestUpdateTransportServerMetricsLabels(t *testing.T) {
+	t.Parallel()
 	cnf, err := createTestConfigurator()
 	if err != nil {
 		t.Fatalf("Failed to create a test configurator: %v", err)
@@ -1085,6 +1104,7 @@ func TestUpdateTransportServerMetricsLabels(t *testing.T) {
 }
 
 func TestUpdateApResources(t *testing.T) {
+	t.Parallel()
 	appProtectPolicy := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"metadata": map[string]interface{}{
@@ -1105,7 +1125,7 @@ func TestUpdateApResources(t *testing.T) {
 
 	tests := []struct {
 		ingEx    *IngressEx
-		expected AppProtectResources
+		expected *AppProtectResources
 		msg      string
 	}{
 		{
@@ -1114,7 +1134,7 @@ func TestUpdateApResources(t *testing.T) {
 					ObjectMeta: meta_v1.ObjectMeta{},
 				},
 			},
-			expected: AppProtectResources{},
+			expected: &AppProtectResources{},
 			msg:      "no app protect resources",
 		},
 		{
@@ -1124,7 +1144,7 @@ func TestUpdateApResources(t *testing.T) {
 				},
 				AppProtectPolicy: appProtectPolicy,
 			},
-			expected: AppProtectResources{
+			expected: &AppProtectResources{
 				AppProtectPolicy: "/etc/nginx/waf/nac-policies/test-ns_test-name",
 			},
 			msg: "app protect policy",
@@ -1141,7 +1161,7 @@ func TestUpdateApResources(t *testing.T) {
 					},
 				},
 			},
-			expected: AppProtectResources{
+			expected: &AppProtectResources{
 				AppProtectLogconfs: []string{"/etc/nginx/waf/nac-logconfs/test-ns_test-name test-dst"},
 			},
 			msg: "app protect log conf",
@@ -1159,7 +1179,7 @@ func TestUpdateApResources(t *testing.T) {
 					},
 				},
 			},
-			expected: AppProtectResources{
+			expected: &AppProtectResources{
 				AppProtectPolicy:   "/etc/nginx/waf/nac-policies/test-ns_test-name",
 				AppProtectLogconfs: []string{"/etc/nginx/waf/nac-logconfs/test-ns_test-name test-dst"},
 			},
@@ -1175,12 +1195,13 @@ func TestUpdateApResources(t *testing.T) {
 	for _, test := range tests {
 		result := conf.updateApResources(test.ingEx)
 		if !reflect.DeepEqual(result, test.expected) {
-			t.Errorf("updateApResources() returned \n%v but exexpected\n%v for the case of %s", result, test.expected, test.msg)
+			t.Errorf("updateApResources() returned \n%v but expected\n%v for the case of %s", result, test.expected, test.msg)
 		}
 	}
 }
 
 func TestUpdateApResourcesForVs(t *testing.T) {
+	t.Parallel()
 	apPolRefs := map[string]*unstructured.Unstructured{
 		"test-ns-1/test-name-1": {
 			Object: map[string]interface{}{
@@ -1220,7 +1241,7 @@ func TestUpdateApResourcesForVs(t *testing.T) {
 
 	tests := []struct {
 		vsEx     *VirtualServerEx
-		expected map[string]string
+		expected *appProtectResourcesForVS
 		msg      string
 	}{
 		{
@@ -1229,8 +1250,11 @@ func TestUpdateApResourcesForVs(t *testing.T) {
 					ObjectMeta: meta_v1.ObjectMeta{},
 				},
 			},
-			expected: map[string]string{},
-			msg:      "no app protect resources",
+			expected: &appProtectResourcesForVS{
+				Policies: map[string]string{},
+				LogConfs: map[string]string{},
+			},
+			msg: "no app protect resources",
 		},
 		{
 			vsEx: &VirtualServerEx{
@@ -1239,9 +1263,12 @@ func TestUpdateApResourcesForVs(t *testing.T) {
 				},
 				ApPolRefs: apPolRefs,
 			},
-			expected: map[string]string{
-				"test-ns-1/test-name-1": "/etc/nginx/waf/nac-policies/test-ns-1_test-name-1",
-				"test-ns-2/test-name-2": "/etc/nginx/waf/nac-policies/test-ns-2_test-name-2",
+			expected: &appProtectResourcesForVS{
+				Policies: map[string]string{
+					"test-ns-1/test-name-1": "/etc/nginx/waf/nac-policies/test-ns-1_test-name-1",
+					"test-ns-2/test-name-2": "/etc/nginx/waf/nac-policies/test-ns-2_test-name-2",
+				},
+				LogConfs: map[string]string{},
 			},
 			msg: "app protect policies",
 		},
@@ -1252,9 +1279,12 @@ func TestUpdateApResourcesForVs(t *testing.T) {
 				},
 				LogConfRefs: logConfRefs,
 			},
-			expected: map[string]string{
-				"test-ns-1/test-name-1": "/etc/nginx/waf/nac-logconfs/test-ns-1_test-name-1",
-				"test-ns-2/test-name-2": "/etc/nginx/waf/nac-logconfs/test-ns-2_test-name-2",
+			expected: &appProtectResourcesForVS{
+				Policies: map[string]string{},
+				LogConfs: map[string]string{
+					"test-ns-1/test-name-1": "/etc/nginx/waf/nac-logconfs/test-ns-1_test-name-1",
+					"test-ns-2/test-name-2": "/etc/nginx/waf/nac-logconfs/test-ns-2_test-name-2",
+				},
 			},
 			msg: "app protect log confs",
 		},
@@ -1266,10 +1296,15 @@ func TestUpdateApResourcesForVs(t *testing.T) {
 				ApPolRefs:   apPolRefs,
 				LogConfRefs: logConfRefs,
 			},
-			expected: map[string]string{
-				// this is a bug - the result needs to include both policies and log confs
-				"test-ns-1/test-name-1": "/etc/nginx/waf/nac-logconfs/test-ns-1_test-name-1",
-				"test-ns-2/test-name-2": "/etc/nginx/waf/nac-logconfs/test-ns-2_test-name-2",
+			expected: &appProtectResourcesForVS{
+				Policies: map[string]string{
+					"test-ns-1/test-name-1": "/etc/nginx/waf/nac-policies/test-ns-1_test-name-1",
+					"test-ns-2/test-name-2": "/etc/nginx/waf/nac-policies/test-ns-2_test-name-2",
+				},
+				LogConfs: map[string]string{
+					"test-ns-1/test-name-1": "/etc/nginx/waf/nac-logconfs/test-ns-1_test-name-1",
+					"test-ns-2/test-name-2": "/etc/nginx/waf/nac-logconfs/test-ns-2_test-name-2",
+				},
 			},
 			msg: "app protect policies and log confs",
 		},
@@ -1282,8 +1317,8 @@ func TestUpdateApResourcesForVs(t *testing.T) {
 
 	for _, test := range tests {
 		result := conf.updateApResourcesForVs(test.vsEx)
-		if !reflect.DeepEqual(result, test.expected) {
-			t.Errorf("updateApResourcesForVs() returned \n%v but exexpected\n%v for the case of %s", result, test.expected, test.msg)
+		if diff := cmp.Diff(test.expected, result); diff != "" {
+			t.Errorf("updateApResourcesForVs() '%s' mismatch (-want +got):\n%s", test.msg, diff)
 		}
 	}
 }

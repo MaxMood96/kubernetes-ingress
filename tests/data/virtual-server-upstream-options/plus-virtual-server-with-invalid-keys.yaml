@@ -28,6 +28,9 @@ spec:
         - name: ""
           value: "$one"
       statusMatch: "invalid"
+      grpcService: "notimplemented"
+      grpcStatus: 12
+      persistent: True
     slow-start: "-3s"
     queue:
       size: -100

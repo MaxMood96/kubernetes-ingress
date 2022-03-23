@@ -13,14 +13,16 @@ from suite.resources_utils import (
     wait_for_event_increment,
 )
 from suite.custom_resources_utils import (
-    patch_ts,
+    patch_ts_from_yaml,
     read_ts,
     delete_ts,
     create_ts_from_yaml,
 )
 from settings import TEST_DATA
 
+
 @pytest.mark.ts
+@pytest.mark.skip_for_loadbalancer
 @pytest.mark.parametrize(
     "crd_ingress_controller, transport_server_setup",
     [
@@ -45,7 +47,7 @@ class TestTransportServerTcpLoadBalance:
         Function to revert a TransportServer resource to a valid state.
         """
         patch_src = f"{TEST_DATA}/transport-server-tcp-load-balance/standard/transport-server.yaml"
-        patch_ts(
+        patch_ts_from_yaml(
             kube_apis.custom_objects,
             transport_server_setup.name,
             patch_src,
@@ -59,8 +61,9 @@ class TestTransportServerTcpLoadBalance:
         """
         The load balancing of TCP should result in 4 servers to match the 4 replicas of a service.
         """
-        original = scale_deployment(kube_apis.v1, kube_apis.apps_v1_api, "tcp-service", transport_server_setup.namespace, 4)
-        
+        original = scale_deployment(kube_apis.v1, kube_apis.apps_v1_api,
+                                    "tcp-service", transport_server_setup.namespace, 4)
+
         num_servers = 0
         retry = 0
 
@@ -81,7 +84,8 @@ class TestTransportServerTcpLoadBalance:
 
         assert num_servers is 4
 
-        scale_deployment(kube_apis.v1, kube_apis.apps_v1_api, "tcp-service", transport_server_setup.namespace, original)
+        scale_deployment(kube_apis.v1, kube_apis.apps_v1_api, "tcp-service",
+                         transport_server_setup.namespace, original)
         retry = 0
         while(num_servers is not original and retry <= 50):
             result_conf = get_ts_nginx_template_conf(
@@ -91,13 +95,13 @@ class TestTransportServerTcpLoadBalance:
                 transport_server_setup.ingress_pod_name,
                 ingress_controller_prerequisites.namespace
             )
-            
+
             pattern = 'server .*;'
             num_servers = len(re.findall(pattern, result_conf))
             retry += 1
             wait_before_test(1)
             print(f"Retry #{retry}")
-        
+
         assert num_servers is original
 
     def test_tcp_request_load_balanced(
@@ -170,7 +174,7 @@ class TestTransportServerTcpLoadBalance:
         client.close()
         assert endpoint is not ""
 
-        # Step 2, add a second TransportServer with the same port and confirm te collision
+        # Step 2, add a second TransportServer with the same port and confirm the collision
         transport_server_file = f"{TEST_DATA}/transport-server-tcp-load-balance/second-transport-server.yaml"
         ts_resource = create_ts_from_yaml(
             kube_apis.custom_objects, transport_server_file, transport_server_setup.namespace
@@ -184,14 +188,15 @@ class TestTransportServerTcpLoadBalance:
             second_ts_name,
         )
         assert (
-                response["status"]
-                and response["status"]["reason"] == "Rejected"
-                and response["status"]["state"] == "Warning"
-                and response["status"]["message"] == "Listener tcp-server is taken by another resource"
+            response["status"]
+            and response["status"]["reason"] == "Rejected"
+            and response["status"]["state"] == "Warning"
+            and response["status"]["message"] == "Listener tcp-server is taken by another resource"
         )
 
         # Step 3, remove the default TransportServer with the same port
-        delete_ts(kube_apis.custom_objects, transport_server_setup.resource, transport_server_setup.namespace)
+        delete_ts(kube_apis.custom_objects, transport_server_setup.resource,
+                  transport_server_setup.namespace)
 
         wait_before_test()
         response = read_ts(
@@ -200,9 +205,9 @@ class TestTransportServerTcpLoadBalance:
             second_ts_name,
         )
         assert (
-                response["status"]
-                and response["status"]["reason"] == "AddedOrUpdated"
-                and response["status"]["state"] == "Valid"
+            response["status"]
+            and response["status"]["reason"] == "AddedOrUpdated"
+            and response["status"]["state"] == "Valid"
         )
 
         # Step 4, confirm load balancing is still working.
@@ -232,7 +237,7 @@ class TestTransportServerTcpLoadBalance:
         """
 
         patch_src = f"{TEST_DATA}/transport-server-tcp-load-balance/wrong-port-transport-server.yaml"
-        patch_ts(
+        patch_ts_from_yaml(
             kube_apis.custom_objects,
             transport_server_setup.name,
             patch_src,
@@ -263,7 +268,7 @@ class TestTransportServerTcpLoadBalance:
         """
 
         patch_src = f"{TEST_DATA}/transport-server-tcp-load-balance/missing-service-transport-server.yaml"
-        patch_ts(
+        patch_ts_from_yaml(
             kube_apis.custom_objects,
             transport_server_setup.name,
             patch_src,
@@ -306,7 +311,7 @@ class TestTransportServerTcpLoadBalance:
 
         # step 1 - set max connections to 2 with 1 replica
         patch_src = f"{TEST_DATA}/transport-server-tcp-load-balance/max-connections-transport-server.yaml"
-        patch_ts(
+        patch_ts_from_yaml(
             kube_apis.custom_objects,
             transport_server_setup.name,
             patch_src,
@@ -329,7 +334,6 @@ class TestTransportServerTcpLoadBalance:
             retry += 1
             wait_before_test(1)
             print(f"Retry #{retry}")
-
 
         assert configs is 3
 
@@ -355,7 +359,7 @@ class TestTransportServerTcpLoadBalance:
 
         # step 4 - revert to config with no max connections
         patch_src = f"{TEST_DATA}/transport-server-tcp-load-balance/standard/transport-server.yaml"
-        patch_ts(
+        patch_ts_from_yaml(
             kube_apis.custom_objects,
             transport_server_setup.name,
             patch_src,
@@ -383,7 +387,7 @@ class TestTransportServerTcpLoadBalance:
         # Step 1 - set the load balancing method.
 
         patch_src = f"{TEST_DATA}/transport-server-tcp-load-balance/method-transport-server.yaml"
-        patch_ts(
+        patch_ts_from_yaml(
             kube_apis.custom_objects,
             transport_server_setup.name,
             patch_src,
@@ -432,7 +436,7 @@ class TestTransportServerTcpLoadBalance:
             wait_before_test(1)
             print(f"Retry #{retry}")
 
-        assert len(endpoints) is 1    
+        assert len(endpoints) is 1
 
         # Step 3 - restore to default load balancing method and confirm requests are balanced.
 
@@ -471,7 +475,7 @@ class TestTransportServerTcpLoadBalance:
         # Step 1 - configure a passing health check
 
         patch_src = f"{TEST_DATA}/transport-server-tcp-load-balance/passing-hc-transport-server.yaml"
-        patch_ts(
+        patch_ts_from_yaml(
             kube_apis.custom_objects,
             transport_server_setup.name,
             patch_src,
@@ -490,7 +494,7 @@ class TestTransportServerTcpLoadBalance:
 
         match = f"match_ts_{transport_server_setup.namespace}_transport-server_tcp-app"
 
-        assert "health_check interval=5s port=3333" in result_conf
+        assert "health_check interval=5s" in result_conf
         assert f"passes=1 jitter=0s fails=1 match={match}" in result_conf
         assert "health_check_timeout 3s;"
         assert 'send "health"' in result_conf
@@ -536,7 +540,7 @@ class TestTransportServerTcpLoadBalance:
         # Step 1 - configure a failing health check
 
         patch_src = f"{TEST_DATA}/transport-server-tcp-load-balance/failing-hc-transport-server.yaml"
-        patch_ts(
+        patch_ts_from_yaml(
             kube_apis.custom_objects,
             transport_server_setup.name,
             patch_src,
@@ -555,7 +559,7 @@ class TestTransportServerTcpLoadBalance:
 
         match = f"match_ts_{transport_server_setup.namespace}_transport-server_tcp-app"
 
-        assert "health_check interval=5s port=3333" in result_conf
+        assert "health_check interval=5s" in result_conf
         assert f"passes=1 jitter=0s fails=1 match={match}" in result_conf
         assert "health_check_timeout 3s"
         assert 'send "health"' in result_conf
@@ -571,7 +575,7 @@ class TestTransportServerTcpLoadBalance:
         client.sendall(b'connect')
 
         try:
-            client.recv(4096) # must return ConnectionResetError
+            client.recv(4096)  # must return ConnectionResetError
             client.close()
             pytest.fail("We expected an error here, but didn't get it. Exiting...")
         except ConnectionResetError as ex:

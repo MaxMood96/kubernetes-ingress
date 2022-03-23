@@ -1,25 +1,19 @@
 """Describe methods to utilize the kubernetes-client."""
-import re
-import os
-import time
-import yaml
 import json
+import os
+import re
+import time
+
 import pytest
 import requests
-
-from kubernetes.client import (
-    CoreV1Api,
-    NetworkingV1Api,
-    RbacAuthorizationV1Api,
-    V1Service,
-    AppsV1Api,
-)
+import yaml
+from kubernetes.client import (AppsV1Api, CoreV1Api, NetworkingV1Api,
+                               RbacAuthorizationV1Api, V1Service)
 from kubernetes.client.rest import ApiException
 from kubernetes.stream import stream
-from kubernetes import client
 from more_itertools import first
-
-from settings import TEST_DATA, RECONFIGURATION_DELAY, DEPLOYMENTS, PROJECT_ROOT
+from settings import (DEPLOYMENTS, PROJECT_ROOT, RECONFIGURATION_DELAY,
+                      TEST_DATA)
 
 
 class RBACAuthorization:
@@ -79,6 +73,30 @@ def configure_rbac_with_ap(rbac_v1: RbacAuthorizationV1Api) -> RBACAuthorization
                 print(f"Created role '{role_name}'")
             elif dep["kind"] == "ClusterRoleBinding":
                 print("Create binding for AppProtect")
+                binding_name = dep["metadata"]["name"]
+                rbac_v1.create_cluster_role_binding(dep)
+                print(f"Created binding '{binding_name}'")
+        return RBACAuthorization(role_name, binding_name)
+
+
+def configure_rbac_with_dos(rbac_v1: RbacAuthorizationV1Api) -> RBACAuthorization:
+    """
+    Create cluster and binding for Dos module.
+    :param rbac_v1: RbacAuthorizationV1Api
+    :return: RBACAuthorization
+    """
+    with open(f"{DEPLOYMENTS}/rbac/apdos-rbac.yaml") as f:
+        docs = yaml.safe_load_all(f)
+        role_name = ""
+        binding_name = ""
+        for dep in docs:
+            if dep["kind"] == "ClusterRole":
+                print("Create cluster role for DOS")
+                role_name = dep["metadata"]["name"]
+                rbac_v1.create_cluster_role(dep)
+                print(f"Created role '{role_name}'")
+            elif dep["kind"] == "ClusterRoleBinding":
+                print("Create binding for DOS")
                 binding_name = dep["metadata"]["name"]
                 rbac_v1.create_cluster_role_binding(dep)
                 print(f"Created binding '{binding_name}'")
@@ -193,7 +211,7 @@ def create_deployment_with_name(apps_v1_api: AppsV1Api, namespace, name) -> str:
     :param name:
     :return: str
     """
-    print(f"Create a Deployment with a specific name")
+    print(f"Create a Deployment with a specific name: {name}")
     with open(f"{TEST_DATA}/common/backend1.yaml") as f:
         dep = yaml.safe_load(f)
         dep["metadata"]["name"] = name
@@ -219,16 +237,17 @@ def scale_deployment(v1: CoreV1Api, apps_v1_api: AppsV1Api, name, namespace, val
     print(f"Scaling deployment '{name}' to {value} replica(s)")
     body.spec.replicas = value
     apps_v1_api.patch_namespaced_deployment_scale(name, namespace, body)
-    if value is not 0:
+    if value != 0:
         now = time.time()
         wait_until_all_pods_are_ready(v1, namespace)
         later = time.time()
         print(f"All pods came up in {int(later-now)} seconds")
 
-    elif value is 0:
+    elif value == 0:
         replica_num = (apps_v1_api.read_namespaced_deployment_scale(name, namespace)).spec.replicas
         while(replica_num is not None):
-            replica_num = (apps_v1_api.read_namespaced_deployment_scale(name, namespace)).spec.replicas
+            replica_num = (apps_v1_api.read_namespaced_deployment_scale(
+                name, namespace)).spec.replicas
             time.sleep(1)
             print("Number of replicas is not 0, retrying...")
 
@@ -262,22 +281,22 @@ class PodNotReadyException(Exception):
 
 def wait_until_all_pods_are_ready(v1: CoreV1Api, namespace) -> None:
     """
-    Wait for all the pods to be 'ContainersReady'.
+    Wait for all the pods to be 'Ready'.
 
     :param v1: CoreV1Api
     :param namespace: namespace of a pod
     :return:
     """
-    print("Start waiting for all pods in a namespace to be ContainersReady")
+    print("Start waiting for all pods in a namespace to be Ready")
     counter = 0
     while not are_all_pods_in_ready_state(v1, namespace) and counter < 200:
         # remove counter based condition from line #264 and #269 if --batch-start="True"
-        print("There are pods that are not ContainersReady. Wait for 1 sec...")
+        print("There are pods that are not Ready. Wait for 1 sec...")
         time.sleep(1)
         counter = counter + 1
-    if counter >= 200:
+    if counter >= 300:
         raise PodNotReadyException()
-    print("All pods are ContainersReady")
+    print("All pods are Ready")
 
 
 def get_first_pod_name(v1: CoreV1Api, namespace) -> str:
@@ -294,7 +313,7 @@ def get_first_pod_name(v1: CoreV1Api, namespace) -> str:
 
 def are_all_pods_in_ready_state(v1: CoreV1Api, namespace) -> bool:
     """
-    Check if all the pods have ContainersReady condition.
+    Check if all the pods have Ready condition.
 
     :param v1: CoreV1Api
     :param namespace: namespace
@@ -308,8 +327,7 @@ def are_all_pods_in_ready_state(v1: CoreV1Api, namespace) -> bool:
         if pod.status.conditions is None:
             return False
         for condition in pod.status.conditions:
-            # wait for 'Ready' state instead of 'ContainersReady' for backwards compatibility with k8s 1.10
-            if condition.type == "ContainersReady" and condition.status == "True":
+            if condition.type == "Ready" and condition.status == "True":
                 pod_ready_amount = pod_ready_amount + 1
                 break
     return pod_ready_amount == len(pods.items)
@@ -326,6 +344,36 @@ def get_pods_amount(v1: CoreV1Api, namespace) -> int:
     pods = v1.list_namespaced_pod(namespace)
     return 0 if not pods.items else len(pods.items)
 
+def get_pods_amount_with_name(v1: CoreV1Api, namespace, name) -> int:
+    """
+    Get an amount of pods.
+
+    :param v1: CoreV1Api
+    :param namespace: namespace
+    :param name: name
+    :return: int
+    """
+    pods = v1.list_namespaced_pod(namespace)
+    count = 0
+    if pods and pods.items:
+        for item in pods.items:
+            if name in item.metadata.name:
+                count += 1
+    return count
+
+def get_pod_name_that_contains(v1: CoreV1Api, namespace, contains_string) -> str:
+    """
+    Get an amount of pods.
+
+    :param v1: CoreV1Api
+    :param namespace: namespace
+    :param contains_string: string to search on
+    :return: string
+    """
+    for item in v1.list_namespaced_pod(namespace).items:
+        if contains_string in item.metadata.name:
+            return item.metadata.name
+    return ""
 
 def create_service_from_yaml(v1: CoreV1Api, namespace, yaml_manifest) -> str:
     """
@@ -366,7 +414,7 @@ def create_service_with_name(v1: CoreV1Api, namespace, name) -> str:
     :param name: name
     :return: str
     """
-    print(f"Create a Service with a specific name:")
+    print(f"Create a Service with a specific name: {name}")
     with open(f"{TEST_DATA}/common/backend1-svc.yaml") as f:
         dep = yaml.safe_load(f)
         dep["metadata"]["name"] = name
@@ -650,7 +698,7 @@ def create_namespace_with_name_from_yaml(v1: CoreV1Api, name, yaml_manifest) -> 
     :param yaml_manifest: an absolute path to file
     :return: str
     """
-    print(f"Create a namespace with specific name:")
+    print(f"Create a namespace with specific name: {name}")
     with open(yaml_manifest) as f:
         dep = yaml.safe_load(f)
         dep["metadata"]["name"] = name
@@ -788,7 +836,7 @@ def delete_testing_namespaces(v1: CoreV1Api) -> []:
         delete_namespace(v1, namespace.metadata.name)
 
 
-def get_file_contents(v1: CoreV1Api, file_path, pod_name, pod_namespace) -> str:
+def get_file_contents(v1: CoreV1Api, file_path, pod_name, pod_namespace, print_log=True) -> str:
     """
     Execute 'cat file_path' command in a pod.
 
@@ -796,6 +844,7 @@ def get_file_contents(v1: CoreV1Api, file_path, pod_name, pod_namespace) -> str:
     :param pod_name: pod name
     :param pod_namespace: pod namespace
     :param file_path: an absolute path to a file in the pod
+    :param print_log: bool to decide if print log or not
     :return: str
     """
     command = ["cat", file_path]
@@ -810,8 +859,80 @@ def get_file_contents(v1: CoreV1Api, file_path, pod_name, pod_namespace) -> str:
         tty=False,
     )
     result_conf = str(resp)
-    print("\nFile contents:\n" + result_conf)
+    if print_log:
+        print("\nFile contents:\n" + result_conf)
     return result_conf
+
+def clear_file_contents(v1: CoreV1Api, file_path, pod_name, pod_namespace) -> str:
+    """
+    Execute 'truncate -s 0 file_path' command in a pod.
+
+    :param v1: CoreV1Api
+    :param pod_name: pod name
+    :param pod_namespace: pod namespace
+    :param file_path: an absolute path to a file in the pod
+    :return: str
+    """
+    command = ["truncate", "-s", "0", file_path]
+    resp = stream(
+        v1.connect_get_namespaced_pod_exec,
+        pod_name,
+        pod_namespace,
+        command=command,
+        stderr=True,
+        stdin=False,
+        stdout=True,
+        tty=False,
+    )
+    result_conf = str(resp)
+
+    return result_conf
+
+def nginx_reload(v1: CoreV1Api, pod_name, pod_namespace) -> str:
+    """
+    Execute 'nginx -s reload' command in a pod.
+
+    :param v1: CoreV1Api
+    :param pod_name: pod name
+    :param pod_namespace: pod namespace
+    :return: str
+    """
+    command = ["nginx", "-s", "reload"]
+    resp = stream(
+        v1.connect_get_namespaced_pod_exec,
+        pod_name,
+        pod_namespace,
+        command=command,
+        stderr=True,
+        stdin=False,
+        stdout=True,
+        tty=False,
+    )
+    result_conf = str(resp)
+
+    return result_conf
+
+
+def clear_file_contents(v1: CoreV1Api, file_path, pod_name, pod_namespace):
+    """
+    Execute 'cat /dev/null > file_path' command in a pod.
+
+    :param v1: CoreV1Api
+    :param pod_name: pod name
+    :param pod_namespace: pod namespace
+    :param file_path: an absolute path to a file in the pod
+    """
+    command = ["cat /dev/null > ", file_path]
+    resp = stream(
+        v1.connect_get_namespaced_pod_exec,
+        pod_name,
+        pod_namespace,
+        command=command,
+        stderr=True,
+        stdin=False,
+        stdout=True,
+        tty=False,
+    )
 
 
 def get_ingress_nginx_template_conf(
@@ -941,7 +1062,7 @@ def wait_for_event_increment(kube_apis, namespace, event_count, offset) -> bool:
     """
     Wait for event count to increase.
 
-    :param kube_apis: Kubernates API
+    :param kube_apis: Kubernetes API
     :param namespace: event namespace
     :param event_count: Current even count
     :param offset: Number of events generated by last operation
@@ -1017,6 +1138,54 @@ def delete_ingress_controller(apps_v1_api: AppsV1Api, name, dep_type, namespace)
         delete_daemon_set(apps_v1_api, name, namespace)
 
 
+def create_dos_arbitrator(
+    v1: CoreV1Api, apps_v1_api: AppsV1Api, namespace
+) -> str:
+    """
+    Create dos arbitrator according to the params.
+
+    :param v1: CoreV1Api
+    :param apps_v1_api: AppsV1Api
+    :param namespace: namespace name
+    :return: str
+    """
+    yaml_manifest = (
+        f"{DEPLOYMENTS}/deployment/appprotect-dos-arb.yaml"
+    )
+    with open(yaml_manifest) as f:
+        dep = yaml.safe_load(f)
+
+    name = create_deployment(apps_v1_api, namespace, dep)
+
+    before = time.time()
+    wait_until_all_pods_are_ready(v1, namespace)
+    after = time.time()
+    print(f"All pods came up in {int(after-before)} seconds")
+    print(f"Dos arbitrator was created with name '{name}'")
+
+    print("create dos svc")
+    svc_name = create_service_from_yaml(
+        v1,
+        namespace,
+        f"{DEPLOYMENTS}/service/appprotect-dos-arb-svc.yaml",
+    )
+    print(f"Dos arbitrator svc was created with name '{svc_name}'")
+    return name
+
+
+def delete_dos_arbitrator(v1: CoreV1Api, apps_v1_api: AppsV1Api, name, namespace) -> None:
+    """
+    Delete dos arbitrator.
+
+    :param v1: CoreV1Api
+    :param apps_v1_api: AppsV1Api
+    :param name: name
+    :param namespace: namespace name
+    :return:
+    """
+    delete_deployment(apps_v1_api, name, namespace)
+    delete_service(v1, "svc-appprotect-dos-arb", namespace)
+
 def create_ns_and_sa_from_yaml(v1: CoreV1Api, yaml_manifest) -> str:
     """
     Create a namespace and a service account in that namespace.
@@ -1082,7 +1251,10 @@ def create_ingress_with_ap_annotations(
     :return:
     """
     print("Load ingress yaml and set AppProtect annotations")
-    policy = f"{namespace}/{policy_name}"
+    if "/" in policy_name:
+        policy = policy_name
+    else:
+        policy = f"{namespace}/{policy_name}"
     logconf = f"{namespace}/logconf"
 
     with open(yaml_manifest) as f:
@@ -1097,6 +1269,25 @@ def create_ingress_with_ap_annotations(
         doc["metadata"]["annotations"][
             "appprotect.f5.com/app-protect-security-log-destination"
         ] = f"syslog:server={syslog_ep}"
+        create_ingress(kube_apis.networking_v1, namespace, doc)
+
+
+def create_ingress_with_dos_annotations(
+        kube_apis, yaml_manifest, namespace, dos_protected
+) -> None:
+    """
+    Create an ingress with AppProtect annotations
+    :param dos_protected: the namepsace/name of the dos protected resource
+    :param kube_apis: KubeApis
+    :param yaml_manifest: an absolute path to ingress yaml
+    :param namespace: namespace
+    :return:
+    """
+    print("Load ingress yaml and set DOS annotations")
+
+    with open(yaml_manifest) as f:
+        doc = yaml.safe_load(f)
+        doc["metadata"]["annotations"]["appprotectdos.f5.com/app-protect-dos-resource"] = dos_protected
         create_ingress(kube_apis.networking_v1, namespace, doc)
 
 
@@ -1275,7 +1466,7 @@ def ensure_response_from_backend(req_url, host, additional_headers=None, check40
 def get_service_endpoint(kube_apis, service_name, namespace) -> str:
     """
     Wait for endpoint resource to spin up.
-    :param kube_apis: Kubernates API object
+    :param kube_apis: Kubernetes API object
     :param service_name: Service resource name
     :param namespace: test namespace
     :return: endpoint ip
@@ -1283,7 +1474,7 @@ def get_service_endpoint(kube_apis, service_name, namespace) -> str:
     found = False
     retry = 0
     ep = ""
-    while not found and retry < 40:
+    while not found and retry < 60:
         time.sleep(1)
         try:
             ep = (
@@ -1295,6 +1486,7 @@ def get_service_endpoint(kube_apis, service_name, namespace) -> str:
             found = True
             print(f"Endpoint IP for {service_name} is {ep}")
         except TypeError as err:
+            print(f"TypeError: {err}")
             retry += 1
         except ApiException as ex:
             if ex.status == 500:
@@ -1306,7 +1498,7 @@ def get_service_endpoint(kube_apis, service_name, namespace) -> str:
 def parse_metric_data(resp_content, metric_string) -> str:
     for line in resp_content.splitlines():
         if metric_string in line:
-            return re.findall("\d+", line)[0]
+            return re.findall(r"\d+", line)[0]
 
 
 def get_last_reload_time(req_url, ingress_class) -> str:
@@ -1320,7 +1512,7 @@ def get_last_reload_time(req_url, ingress_class) -> str:
 
 
 def get_total_ingresses(req_url, ingress_class) -> str:
-    # retuen total number of ingresses in specified class of regular type
+    # return total number of ingresses in specified class of regular type
     ensure_connection(req_url, 200)
     resp = requests.get(req_url)
     resp_content = resp.content.decode("utf-8")
@@ -1347,7 +1539,7 @@ def get_total_vsr(req_url, ingress_class) -> str:
 
 
 def get_last_reload_status(req_url, ingress_class) -> str:
-    # returnb last reload status 0/1
+    # return last reload status 0/1
     ensure_connection(req_url, 200)
     resp = requests.get(req_url)
     resp_content = resp.content.decode("utf-8")
@@ -1372,7 +1564,7 @@ def get_reload_count(req_url) -> int:
         # nginx_ingress_controller_nginx_reloads_total{class="nginx",reason="endpoints"} 0
         # nginx_ingress_controller_nginx_reloads_total{class="nginx",reason="other"} 1
         if "nginx_ingress_controller_nginx_reloads_total{class=" in line:
-            c = re.findall("\d+", line)[0]
+            c = re.findall(r"\d+", line)[0]
             count += int(c)
             found += 1
 
@@ -1397,8 +1589,20 @@ def write_to_json(fname, data) -> None:
     :param data: dictionary
     """
     file_path = f"{PROJECT_ROOT}/json_files/"
-    if os.path.isdir(file_path) == False:
+    if not os.path.isdir(file_path):
         os.mkdir(file_path)
 
     with open(f"json_files/{fname}", "w+") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
+
+
+def get_last_log_entry(kube_apis, pod_name, namespace) -> str:
+    """
+    :param kube_apis: kube apis
+    :param pod_name: the name of the pod
+    :param namespace: the namespace
+    """
+    logs = kube_apis.read_namespaced_pod_log(pod_name, namespace)
+    # Our log entries end in '\n' which means the final entry when we split on a new line
+    # is an empty string. Return the second to last entry instead.
+    return logs.split('\n')[-2]

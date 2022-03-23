@@ -3,7 +3,7 @@ import pytest
 from settings import TEST_DATA
 from suite.custom_assertions import assert_event_and_count, assert_event_and_get_count, wait_and_assert_status_code, \
     wait_for_event_count_increases, assert_event_with_full_equality_and_count
-from suite.custom_resources_utils import get_vs_nginx_template_conf
+from suite.vs_vsr_resources_utils import get_vs_nginx_template_conf
 from suite.resources_utils import replace_configmap_from_yaml, \
     ensure_connection_to_public_endpoint, replace_configmap, create_service_from_yaml, get_first_pod_name, get_events, \
     read_service, replace_service, wait_before_test, delete_namespace, create_service_with_name, \
@@ -78,7 +78,7 @@ class TestVSWithExternalNameService:
                                                  virtual_server_setup.vs_name,
                                                  vs_externalname_setup.ic_pod_name,
                                                  ingress_controller_prerequisites.namespace)
-        line = f"zone vs_{virtual_server_setup.namespace}_{virtual_server_setup.vs_name}_backend1 256k;"
+        line = f"zone vs_{virtual_server_setup.namespace}_{virtual_server_setup.vs_name}_backend1 512k;"
         assert line in result_conf
         assert "random two least_conn;" in result_conf
         assert f"server {vs_externalname_setup.external_host}:80 max_fails=1 fail_timeout=10s max_conns=0 resolve;"\

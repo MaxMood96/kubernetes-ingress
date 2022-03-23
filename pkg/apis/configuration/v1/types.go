@@ -43,6 +43,7 @@ type VirtualServerSpec struct {
 	Routes         []Route           `json:"routes"`
 	HTTPSnippets   string            `json:"http-snippets"`
 	ServerSnippets string            `json:"server-snippets"`
+	Dos            string            `json:"dos"`
 }
 
 // PolicyReference references a policy by name and an optional namespace.
@@ -79,6 +80,7 @@ type Upstream struct {
 	SessionCookie            *SessionCookie    `json:"sessionCookie"`
 	UseClusterIP             bool              `json:"use-cluster-ip"`
 	NTLM                     bool              `json:"ntlm"`
+	Type                     string            `json:"type"`
 }
 
 // UpstreamBuffers defines Buffer Configuration for an Upstream.
@@ -107,6 +109,10 @@ type HealthCheck struct {
 	SendTimeout    string       `json:"send-timeout"`
 	Headers        []Header     `json:"headers"`
 	StatusMatch    string       `json:"statusMatch"`
+	GRPCStatus     *int         `json:"grpcStatus"`
+	GRPCService    string       `json:"grpcService"`
+	Mandatory      bool         `json:"mandatory"`
+	Persistent     bool         `json:"persistent"`
 }
 
 // Header defines an HTTP Header.
@@ -136,6 +142,7 @@ type Route struct {
 	Matches          []Match           `json:"matches"`
 	ErrorPages       []ErrorPage       `json:"errorPages"`
 	LocationSnippets string            `json:"location-snippets"`
+	Dos              string            `json:"dos"`
 }
 
 // Action defines an action.
@@ -294,6 +301,7 @@ type VirtualServerRouteSpec struct {
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 
+// VirtualServerRouteList is a list of VirtualServerRoute
 type VirtualServerRouteList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata"`
@@ -321,6 +329,7 @@ type VirtualServerRouteStatus struct {
 // +kubebuilder:validation:Optional
 // +kubebuilder:resource:shortName=pol
 // +kubebuilder:subresource:status
+// +kubebuilder:storageversion
 // +kubebuilder:printcolumn:name="State",type=string,JSONPath=`.status.state`,description="Current state of the Policy. If the resource has a valid status, it means it has been validated and accepted by the Ingress Controller."
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 

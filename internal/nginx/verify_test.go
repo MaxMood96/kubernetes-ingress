@@ -2,7 +2,7 @@ package nginx
 
 import (
 	"bytes"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -11,10 +11,10 @@ import (
 
 type Transport struct{}
 
-func (c Transport) RoundTrip(req *http.Request) (*http.Response, error) {
+func (c Transport) RoundTrip(_ *http.Request) (*http.Response, error) {
 	return &http.Response{
 		StatusCode: 200,
-		Body:       ioutil.NopCloser(bytes.NewBufferString("42")),
+		Body:       io.NopCloser(bytes.NewBufferString("42")),
 		Header:     make(http.Header),
 	}, nil
 }
@@ -28,6 +28,7 @@ func getTestHTTPClient() *http.Client {
 }
 
 func TestVerifyClient(t *testing.T) {
+	t.Parallel()
 	c := verifyClient{
 		client:  getTestHTTPClient(),
 		timeout: 25 * time.Millisecond,
@@ -52,6 +53,7 @@ func TestVerifyClient(t *testing.T) {
 }
 
 func TestConfigWriter(t *testing.T) {
+	t.Parallel()
 	cw, err := newVerifyConfigGenerator()
 	if err != nil {
 		t.Fatalf("error instantiating ConfigWriter: %v", err)

@@ -2,8 +2,9 @@ import pytest
 import requests
 import yaml
 
+from yaml.loader import Loader
 from settings import TEST_DATA
-from suite.custom_resources_utils import create_virtual_server_from_yaml, create_v_s_route_from_yaml
+from suite.vs_vsr_resources_utils import create_virtual_server_from_yaml, create_v_s_route_from_yaml
 from suite.fixtures import VirtualServerRoute
 from suite.resources_utils import ensure_response_from_backend, create_example_app, \
     wait_until_all_pods_are_ready, create_namespace_with_name_from_yaml, delete_namespace
@@ -19,7 +20,7 @@ def get_weights_of_splitting(file) -> []:
     """
     weights = []
     with open(file) as f:
-        docs = yaml.load_all(f)
+        docs = yaml.load_all(f, Loader=Loader)
         for dep in docs:
             for item in dep['spec']['subroutes'][0]['matches'][0]['splits']:
                 weights.append(item['weight'])
@@ -35,7 +36,7 @@ def get_upstreams_of_splitting(file) -> []:
     """
     upstreams = []
     with open(file) as f:
-        docs = yaml.load_all(f)
+        docs = yaml.load_all(f, Loader=Loader)
         for dep in docs:
             for item in dep['spec']['subroutes'][0]['matches'][0]['splits']:
                 upstreams.append(item['action']['pass'])
@@ -108,6 +109,7 @@ def vsr_canary_setup(request, kube_apis,
     return VSRAdvancedRoutingSetup(ns_1, vs_host, vs_name, route, backends_url)
 
 
+@pytest.mark.flaky(max_runs=3)
 @pytest.mark.vsr
 @pytest.mark.parametrize('crd_ingress_controller, vsr_canary_setup',
                          [({"type": "complete", "extra_args": [f"-enable-custom-resources"]},

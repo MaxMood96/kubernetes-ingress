@@ -1,7 +1,7 @@
 import grpc
 import pytest
 from settings import TEST_DATA, DEPLOYMENTS
-from suite.custom_resources_utils import (
+from suite.ap_resources_utils import (
     create_ap_logconf_from_yaml,
     create_ap_policy_from_yaml,
     delete_ap_policy,
@@ -82,11 +82,11 @@ def backend_setup(request, kube_apis, ingress_controller_endpoint, ingress_contr
         print("------------------------- Deploy Syslog -----------------------------")
         src_syslog_yaml = f"{TEST_DATA}/appprotect/syslog.yaml"
         create_items_from_yaml(kube_apis, src_syslog_yaml, test_namespace)
-        syslog_ep = get_service_endpoint(kube_apis, "syslog-svc", test_namespace)
-        print(syslog_ep)
+        syslog_dst = f"syslog-svc.{test_namespace}"
+        print(syslog_dst)
         print("------------------------- Deploy ingress -----------------------------")
         src_ing_yaml = f"{TEST_DATA}/appprotect/grpc/ingress.yaml"
-        create_ingress_with_ap_annotations(kube_apis, src_ing_yaml, test_namespace, policy, "True", "True", f"{syslog_ep}:514")
+        create_ingress_with_ap_annotations(kube_apis, src_ing_yaml, test_namespace, policy, "True", "True", f"{syslog_dst}:514")
         ingress_host = get_first_ingress_host_from_yaml(src_ing_yaml)
         wait_before_test(40)
     except Exception as ex:
@@ -123,6 +123,7 @@ def backend_setup(request, kube_apis, ingress_controller_endpoint, ingress_contr
 
 @pytest.mark.skip_for_nginx_oss
 @pytest.mark.appprotect
+@pytest.mark.flaky(max_runs=3)
 @pytest.mark.parametrize(
     "crd_ingress_controller_with_ap",
     [{"extra_args": [f"-enable-custom-resources", f"-enable-app-protect"]}],
@@ -161,8 +162,16 @@ class TestAppProtect:
                 # grpc.RpcError is also grpc.Call https://grpc.github.io/grpc/python/grpc.html#client-side-context
                 ex = e.details()
                 print(ex)
-                
-        log_contents = get_file_contents(kube_apis.v1, log_loc, syslog_pod, test_namespace)
+        
+        log_contents = ""
+        retry = 0
+        while "ASM:attack_type" not in log_contents and retry <= 30:
+            log_contents = get_file_contents(
+                kube_apis.v1, log_loc, syslog_pod, test_namespace)
+            retry += 1
+            wait_before_test(1)
+            print(f"Security log not updated, retrying... #{retry}")
+
         assert (
             invalid_resp_text in ex and
             'ASM:attack_type="Directory Indexing"' in log_contents and
@@ -195,8 +204,16 @@ class TestAppProtect:
             except grpc.RpcError as e:
                 print(e.details())
                 pytest.fail("RPC error was not expected during call, exiting...")
-                
-        log_contents = get_file_contents(kube_apis.v1, log_loc, syslog_pod, test_namespace)
+
+        log_contents = ""
+        retry = 0
+        while "ASM:attack_type" not in log_contents and retry <= 30:
+            log_contents = get_file_contents(
+                kube_apis.v1, log_loc, syslog_pod, test_namespace)
+            retry += 1
+            wait_before_test(1)
+            print(f"Security log not updated, retrying... #{retry}")
+
         assert (
             valid_resp_txt in response.message and
             'ASM:attack_type="N/A"' in log_contents and

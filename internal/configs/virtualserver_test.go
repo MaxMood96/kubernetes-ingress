@@ -20,7 +20,12 @@ func createPointerFromBool(b bool) *bool {
 	return &b
 }
 
+func createPointerFromInt(n int) *int {
+	return &n
+}
+
 func TestVirtualServerExString(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input    *VirtualServerEx
 		expected string
@@ -55,6 +60,7 @@ func TestVirtualServerExString(t *testing.T) {
 }
 
 func TestGenerateEndpointsKey(t *testing.T) {
+	t.Parallel()
 	serviceNamespace := "default"
 	serviceName := "test"
 	var port uint16 = 80
@@ -83,6 +89,7 @@ func TestGenerateEndpointsKey(t *testing.T) {
 }
 
 func TestUpstreamNamerForVirtualServer(t *testing.T) {
+	t.Parallel()
 	virtualServer := conf_v1.VirtualServer{
 		ObjectMeta: meta_v1.ObjectMeta{
 			Name:      "cafe",
@@ -101,6 +108,7 @@ func TestUpstreamNamerForVirtualServer(t *testing.T) {
 }
 
 func TestUpstreamNamerForVirtualServerRoute(t *testing.T) {
+	t.Parallel()
 	virtualServer := conf_v1.VirtualServer{
 		ObjectMeta: meta_v1.ObjectMeta{
 			Name:      "cafe",
@@ -125,6 +133,7 @@ func TestUpstreamNamerForVirtualServerRoute(t *testing.T) {
 }
 
 func TestVariableNamerSafeNsName(t *testing.T) {
+	t.Parallel()
 	virtualServer := conf_v1.VirtualServer{
 		ObjectMeta: meta_v1.ObjectMeta{
 			Name:      "cafe-test",
@@ -146,6 +155,7 @@ func TestVariableNamerSafeNsName(t *testing.T) {
 }
 
 func TestVariableNamer(t *testing.T) {
+	t.Parallel()
 	virtualServer := conf_v1.VirtualServer{
 		ObjectMeta: meta_v1.ObjectMeta{
 			Name:      "cafe",
@@ -188,6 +198,7 @@ func TestVariableNamer(t *testing.T) {
 }
 
 func TestGenerateVirtualServerConfig(t *testing.T) {
+	t.Parallel()
 	virtualServerEx := VirtualServerEx{
 		VirtualServer: &conf_v1.VirtualServer{
 			ObjectMeta: meta_v1.ObjectMeta{
@@ -634,14 +645,16 @@ func TestGenerateVirtualServerConfig(t *testing.T) {
 
 	isPlus := false
 	isResolverConfigured := false
+	isWildcardEnabled := false
 	vsc := newVirtualServerConfigurator(
 		&baseCfgParams,
 		isPlus,
 		isResolverConfigured,
 		&StaticConfigParams{TLSPassthrough: true},
+		isWildcardEnabled,
 	)
 
-	result, warnings := vsc.GenerateVirtualServerConfig(&virtualServerEx, nil)
+	result, warnings := vsc.GenerateVirtualServerConfig(&virtualServerEx, nil, nil)
 	if diff := cmp.Diff(expected, result); diff != "" {
 		t.Errorf("GenerateVirtualServerConfig() mismatch (-want +got):\n%s", diff)
 	}
@@ -651,7 +664,374 @@ func TestGenerateVirtualServerConfig(t *testing.T) {
 	}
 }
 
+func TestGenerateVirtualServerConfigGrpcErrorPageWarning(t *testing.T) {
+	t.Parallel()
+	virtualServerEx := VirtualServerEx{
+		VirtualServer: &conf_v1.VirtualServer{
+			ObjectMeta: meta_v1.ObjectMeta{
+				Name:      "cafe",
+				Namespace: "default",
+			},
+			Spec: conf_v1.VirtualServerSpec{
+				Host: "cafe.example.com",
+				TLS: &conf_v1.TLS{
+					Secret: "",
+				},
+				Upstreams: []conf_v1.Upstream{
+					{
+						Name:    "grpc-app-1",
+						Service: "grpc-svc",
+						Port:    50051,
+						Type:    "grpc",
+						TLS: conf_v1.UpstreamTLS{
+							Enable: true,
+						},
+					},
+					{
+						Name:    "grpc-app-2",
+						Service: "grpc-svc2",
+						Port:    50052,
+						Type:    "grpc",
+						TLS: conf_v1.UpstreamTLS{
+							Enable: true,
+						},
+					},
+					{
+						Name:    "tea",
+						Service: "tea-svc",
+						Port:    80,
+					},
+				},
+				Routes: []conf_v1.Route{
+					{
+						Path: "/grpc-errorpage",
+						Action: &conf_v1.Action{
+							Pass: "grpc-app-1",
+						},
+						ErrorPages: []conf_v1.ErrorPage{
+							{
+								Codes: []int{404, 405},
+								Return: &conf_v1.ErrorPageReturn{
+									ActionReturn: conf_v1.ActionReturn{
+										Code: 200,
+										Type: "text/plain",
+										Body: "All Good",
+									},
+								},
+							},
+						},
+					},
+					{
+						Path: "/grpc-matches",
+						Matches: []conf_v1.Match{
+							{
+								Conditions: []conf_v1.Condition{
+									{
+										Variable: "$request_method",
+										Value:    "POST",
+									},
+								},
+								Action: &conf_v1.Action{
+									Pass: "grpc-app-2",
+								},
+							},
+						},
+						Action: &conf_v1.Action{
+							Pass: "tea",
+						},
+						ErrorPages: []conf_v1.ErrorPage{
+							{
+								Codes: []int{404},
+								Return: &conf_v1.ErrorPageReturn{
+									ActionReturn: conf_v1.ActionReturn{
+										Code: 200,
+										Type: "text/plain",
+										Body: "Original resource not found, but success!",
+									},
+								},
+							},
+						},
+					},
+					{
+						Path: "/grpc-splits",
+						Splits: []conf_v1.Split{
+							{
+								Weight: 90,
+								Action: &conf_v1.Action{
+									Pass: "grpc-app-1",
+								},
+							},
+							{
+								Weight: 10,
+								Action: &conf_v1.Action{
+									Pass: "grpc-app-2",
+								},
+							},
+						},
+						ErrorPages: []conf_v1.ErrorPage{
+							{
+								Codes: []int{404, 405},
+								Return: &conf_v1.ErrorPageReturn{
+									ActionReturn: conf_v1.ActionReturn{
+										Code: 200,
+										Type: "text/plain",
+										Body: "All Good",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		Endpoints: map[string][]string{
+			"default/grpc-svc:50051": {
+				"10.0.0.20:80",
+			},
+		},
+	}
+
+	baseCfgParams := ConfigParams{
+		HTTP2: true,
+	}
+
+	expected := version2.VirtualServerConfig{
+		Upstreams: []version2.Upstream{
+			{
+				UpstreamLabels: version2.UpstreamLabels{
+					Service:           "grpc-svc",
+					ResourceType:      "virtualserver",
+					ResourceName:      "cafe",
+					ResourceNamespace: "default",
+				},
+				Name: "vs_default_cafe_grpc-app-1",
+				Servers: []version2.UpstreamServer{
+					{
+						Address: "10.0.0.20:80",
+					},
+				},
+			},
+			{
+				Name: "vs_default_cafe_grpc-app-2",
+				UpstreamLabels: version2.UpstreamLabels{
+					Service:           "grpc-svc2",
+					ResourceType:      "virtualserver",
+					ResourceName:      "cafe",
+					ResourceNamespace: "default",
+				},
+				Servers: []version2.UpstreamServer{
+					{
+						Address: "unix:/var/lib/nginx/nginx-502-server.sock",
+					},
+				},
+			},
+			{
+				Name: "vs_default_cafe_tea",
+				UpstreamLabels: version2.UpstreamLabels{
+					Service:           "tea-svc",
+					ResourceType:      "virtualserver",
+					ResourceName:      "cafe",
+					ResourceNamespace: "default",
+				},
+				Servers: []version2.UpstreamServer{
+					{
+						Address: "unix:/var/lib/nginx/nginx-502-server.sock",
+					},
+				},
+			},
+		},
+		HTTPSnippets:  []string{},
+		LimitReqZones: []version2.LimitReqZone{},
+		Maps: []version2.Map{
+			{
+				Source:   "$request_method",
+				Variable: "$vs_default_cafe_matches_0_match_0_cond_0",
+				Parameters: []version2.Parameter{
+					{
+						Value:  `"POST"`,
+						Result: "1",
+					},
+					{
+						Value:  "default",
+						Result: "0",
+					},
+				},
+			},
+			{
+				Source:   "$vs_default_cafe_matches_0_match_0_cond_0",
+				Variable: "$vs_default_cafe_matches_0",
+				Parameters: []version2.Parameter{
+					{
+						Value:  "~^1",
+						Result: "/internal_location_matches_0_match_0",
+					},
+					{
+						Value:  "default",
+						Result: "/internal_location_matches_0_default",
+					},
+				},
+			},
+		},
+		Server: version2.Server{
+			ServerName:  "cafe.example.com",
+			StatusZone:  "cafe.example.com",
+			VSNamespace: "default",
+			VSName:      "cafe",
+			SSL: &version2.SSL{
+				HTTP2:          true,
+				Certificate:    "/etc/nginx/secrets/wildcard",
+				CertificateKey: "/etc/nginx/secrets/wildcard",
+			},
+			InternalRedirectLocations: []version2.InternalRedirectLocation{
+				{
+					Path:        "/grpc-matches",
+					Destination: "$vs_default_cafe_matches_0",
+				},
+				{
+					Path:        "/grpc-splits",
+					Destination: "$vs_default_cafe_splits_0",
+				},
+			},
+			Locations: []version2.Location{
+				{
+					Path:                     "/grpc-errorpage",
+					ProxyPass:                "https://vs_default_cafe_grpc-app-1",
+					ProxyNextUpstream:        "error timeout",
+					ProxyNextUpstreamTimeout: "0s",
+					ProxyNextUpstreamTries:   0,
+					ErrorPages:               []version2.ErrorPage{{Name: "@error_page_0_0", Codes: "404 405", ResponseCode: 200}},
+					ProxyInterceptErrors:     true,
+					ProxySSLName:             "grpc-svc.default.svc",
+					ProxyPassRequestHeaders:  true,
+					ProxySetHeaders:          []version2.Header{{Name: "Host", Value: "$host"}},
+					ServiceName:              "grpc-svc",
+					GRPCPass:                 "grpcs://vs_default_cafe_grpc-app-1",
+				},
+				{
+					Path:                     "/internal_location_matches_0_match_0",
+					Internal:                 true,
+					ProxyPass:                "https://vs_default_cafe_grpc-app-2$request_uri",
+					ProxyNextUpstream:        "error timeout",
+					ProxyNextUpstreamTimeout: "0s",
+					ProxyNextUpstreamTries:   0,
+					Rewrites:                 []string{"^ $request_uri break"},
+					ErrorPages:               []version2.ErrorPage{{Name: "@error_page_1_0", Codes: "404", ResponseCode: 200}},
+					ProxyInterceptErrors:     true,
+					ProxySSLName:             "grpc-svc2.default.svc",
+					ProxyPassRequestHeaders:  true,
+					ProxySetHeaders:          []version2.Header{{Name: "Host", Value: "$host"}},
+					ServiceName:              "grpc-svc2",
+					GRPCPass:                 "grpcs://vs_default_cafe_grpc-app-2",
+				},
+				{
+					Path:                     "/internal_location_matches_0_default",
+					Internal:                 true,
+					ProxyPass:                "http://vs_default_cafe_tea$request_uri",
+					ProxyNextUpstream:        "error timeout",
+					ProxyNextUpstreamTimeout: "0s",
+					ProxyNextUpstreamTries:   0,
+					ErrorPages:               []version2.ErrorPage{{Name: "@error_page_1_0", Codes: "404", ResponseCode: 200}},
+					ProxyInterceptErrors:     true,
+					ProxySSLName:             "tea-svc.default.svc",
+					ProxyPassRequestHeaders:  true,
+					ProxySetHeaders:          []version2.Header{{Name: "Host", Value: "$host"}},
+					ServiceName:              "tea-svc",
+				},
+				{
+					Path:                     "/internal_location_splits_0_split_0",
+					Internal:                 true,
+					ProxyPass:                "https://vs_default_cafe_grpc-app-1$request_uri",
+					ProxyNextUpstream:        "error timeout",
+					ProxyNextUpstreamTimeout: "0s",
+					ProxyNextUpstreamTries:   0,
+					HasKeepalive:             false,
+					ErrorPages:               []version2.ErrorPage{{Name: "@error_page_2_0", Codes: "404 405", ResponseCode: 200}},
+					ProxyInterceptErrors:     true,
+					Rewrites:                 []string{"^ $request_uri break"},
+					ProxySSLName:             "grpc-svc.default.svc",
+					ProxyPassRequestHeaders:  true,
+					ProxySetHeaders:          []version2.Header{{Name: "Host", Value: "$host"}},
+					ServiceName:              "grpc-svc",
+					GRPCPass:                 "grpcs://vs_default_cafe_grpc-app-1",
+				},
+				{
+					Path:                     "/internal_location_splits_0_split_1",
+					Internal:                 true,
+					ProxyPass:                "https://vs_default_cafe_grpc-app-2$request_uri",
+					ProxyNextUpstream:        "error timeout",
+					ProxyNextUpstreamTimeout: "0s",
+					ProxyNextUpstreamTries:   0,
+					HasKeepalive:             false,
+					ErrorPages:               []version2.ErrorPage{{Name: "@error_page_2_0", Codes: "404 405", ResponseCode: 200}},
+					ProxyInterceptErrors:     true,
+					Rewrites:                 []string{"^ $request_uri break"},
+					ProxySSLName:             "grpc-svc2.default.svc",
+					ProxyPassRequestHeaders:  true,
+					ProxySetHeaders:          []version2.Header{{Name: "Host", Value: "$host"}},
+					ServiceName:              "grpc-svc2",
+					GRPCPass:                 "grpcs://vs_default_cafe_grpc-app-2",
+				},
+			},
+			ErrorPageLocations: []version2.ErrorPageLocation{
+				{
+					Name:        "@error_page_0_0",
+					DefaultType: "text/plain",
+					Return:      &version2.Return{Text: "All Good"},
+				},
+				{
+					Name:        "@error_page_1_0",
+					DefaultType: "text/plain",
+					Return:      &version2.Return{Text: "Original resource not found, but success!"},
+				},
+				{
+					Name:        "@error_page_2_0",
+					DefaultType: "text/plain",
+					Return:      &version2.Return{Text: "All Good"},
+				},
+			},
+		},
+		SplitClients: []version2.SplitClient{
+			{
+				Source:   "$request_id",
+				Variable: "$vs_default_cafe_splits_0",
+				Distributions: []version2.Distribution{
+					{
+						Weight: "90%",
+						Value:  "/internal_location_splits_0_split_0",
+					},
+					{
+						Weight: "10%",
+						Value:  "/internal_location_splits_0_split_1",
+					},
+				},
+			},
+		},
+	}
+	expectedWarnings := Warnings{
+		virtualServerEx.VirtualServer: {
+			`The error page configuration for the upstream grpc-app-1 is ignored for status code(s) [404 405], which cannot be used for GRPC upstreams.`,
+			`The error page configuration for the upstream grpc-app-2 is ignored for status code(s) [404], which cannot be used for GRPC upstreams.`,
+			`The error page configuration for the upstream grpc-app-1 is ignored for status code(s) [404 405], which cannot be used for GRPC upstreams.`,
+			`The error page configuration for the upstream grpc-app-2 is ignored for status code(s) [404 405], which cannot be used for GRPC upstreams.`,
+		},
+	}
+	isPlus := false
+	isResolverConfigured := false
+	isWildcardEnabled := true
+	vsc := newVirtualServerConfigurator(&baseCfgParams, isPlus, isResolverConfigured, &StaticConfigParams{}, isWildcardEnabled)
+
+	result, warnings := vsc.GenerateVirtualServerConfig(&virtualServerEx, nil, nil)
+	if diff := cmp.Diff(expected, result); diff != "" {
+		t.Errorf("TestGenerateVirtualServerConfigGrpcErrorPageWarning() mismatch (-want +got):\n%s", diff)
+	}
+
+	if !reflect.DeepEqual(vsc.warnings, expectedWarnings) {
+		t.Errorf("GenerateVirtualServerConfig() returned warnings of \n%v but expected \n%v", warnings, expectedWarnings)
+	}
+}
+
 func TestGenerateVirtualServerConfigWithSpiffeCerts(t *testing.T) {
+	t.Parallel()
 	virtualServerEx := VirtualServerEx{
 		VirtualServer: &conf_v1.VirtualServer{
 			ObjectMeta: meta_v1.ObjectMeta{
@@ -747,9 +1127,10 @@ func TestGenerateVirtualServerConfigWithSpiffeCerts(t *testing.T) {
 	isPlus := false
 	isResolverConfigured := false
 	staticConfigParams := &StaticConfigParams{TLSPassthrough: true, NginxServiceMesh: true}
-	vsc := newVirtualServerConfigurator(&baseCfgParams, isPlus, isResolverConfigured, staticConfigParams)
+	isWildcardEnabled := false
+	vsc := newVirtualServerConfigurator(&baseCfgParams, isPlus, isResolverConfigured, staticConfigParams, isWildcardEnabled)
 
-	result, warnings := vsc.GenerateVirtualServerConfig(&virtualServerEx, nil)
+	result, warnings := vsc.GenerateVirtualServerConfig(&virtualServerEx, nil, nil)
 	if diff := cmp.Diff(expected, result); diff != "" {
 		t.Errorf("GenerateVirtualServerConfig() mismatch (-want +got):\n%s", diff)
 	}
@@ -760,6 +1141,7 @@ func TestGenerateVirtualServerConfigWithSpiffeCerts(t *testing.T) {
 }
 
 func TestGenerateVirtualServerConfigForVirtualServerWithSplits(t *testing.T) {
+	t.Parallel()
 	virtualServerEx := VirtualServerEx{
 		VirtualServer: &conf_v1.VirtualServer{
 			ObjectMeta: meta_v1.ObjectMeta{
@@ -1032,9 +1414,10 @@ func TestGenerateVirtualServerConfigForVirtualServerWithSplits(t *testing.T) {
 
 	isPlus := false
 	isResolverConfigured := false
-	vsc := newVirtualServerConfigurator(&baseCfgParams, isPlus, isResolverConfigured, &StaticConfigParams{})
+	isWildcardEnabled := false
+	vsc := newVirtualServerConfigurator(&baseCfgParams, isPlus, isResolverConfigured, &StaticConfigParams{}, isWildcardEnabled)
 
-	result, warnings := vsc.GenerateVirtualServerConfig(&virtualServerEx, nil)
+	result, warnings := vsc.GenerateVirtualServerConfig(&virtualServerEx, nil, nil)
 	if diff := cmp.Diff(expected, result); diff != "" {
 		t.Errorf("GenerateVirtualServerConfig() mismatch (-want +got):\n%s", diff)
 	}
@@ -1045,6 +1428,7 @@ func TestGenerateVirtualServerConfigForVirtualServerWithSplits(t *testing.T) {
 }
 
 func TestGenerateVirtualServerConfigForVirtualServerWithMatches(t *testing.T) {
+	t.Parallel()
 	virtualServerEx := VirtualServerEx{
 		VirtualServer: &conf_v1.VirtualServer{
 			ObjectMeta: meta_v1.ObjectMeta{
@@ -1349,9 +1733,10 @@ func TestGenerateVirtualServerConfigForVirtualServerWithMatches(t *testing.T) {
 
 	isPlus := false
 	isResolverConfigured := false
-	vsc := newVirtualServerConfigurator(&baseCfgParams, isPlus, isResolverConfigured, &StaticConfigParams{})
+	isWildcardEnabled := false
+	vsc := newVirtualServerConfigurator(&baseCfgParams, isPlus, isResolverConfigured, &StaticConfigParams{}, isWildcardEnabled)
 
-	result, warnings := vsc.GenerateVirtualServerConfig(&virtualServerEx, nil)
+	result, warnings := vsc.GenerateVirtualServerConfig(&virtualServerEx, nil, nil)
 	if diff := cmp.Diff(expected, result); diff != "" {
 		t.Errorf("GenerateVirtualServerConfig() mismatch (-want +got):\n%s", diff)
 	}
@@ -1361,7 +1746,335 @@ func TestGenerateVirtualServerConfigForVirtualServerWithMatches(t *testing.T) {
 	}
 }
 
+func TestGenerateVirtualServerConfigForVirtualServerRoutesWithDos(t *testing.T) {
+	t.Parallel()
+	dosResources := map[string]*appProtectDosResource{
+		"/coffee": {
+			AppProtectDosEnable:          "on",
+			AppProtectDosLogEnable:       false,
+			AppProtectDosMonitorURI:      "test.example.com",
+			AppProtectDosMonitorProtocol: "http",
+			AppProtectDosMonitorTimeout:  0,
+			AppProtectDosName:            "my-dos-coffee",
+			AppProtectDosAccessLogDst:    "svc.dns.com:123",
+			AppProtectDosPolicyFile:      "",
+			AppProtectDosLogConfFile:     "",
+		},
+		"/tea": {
+			AppProtectDosEnable:          "on",
+			AppProtectDosLogEnable:       false,
+			AppProtectDosMonitorURI:      "test.example.com",
+			AppProtectDosMonitorProtocol: "http",
+			AppProtectDosMonitorTimeout:  0,
+			AppProtectDosName:            "my-dos-tea",
+			AppProtectDosAccessLogDst:    "svc.dns.com:123",
+			AppProtectDosPolicyFile:      "",
+			AppProtectDosLogConfFile:     "",
+		},
+		"/juice": {
+			AppProtectDosEnable:          "on",
+			AppProtectDosLogEnable:       false,
+			AppProtectDosMonitorURI:      "test.example.com",
+			AppProtectDosMonitorProtocol: "http",
+			AppProtectDosMonitorTimeout:  0,
+			AppProtectDosName:            "my-dos-juice",
+			AppProtectDosAccessLogDst:    "svc.dns.com:123",
+			AppProtectDosPolicyFile:      "",
+			AppProtectDosLogConfFile:     "",
+		},
+	}
+
+	virtualServerEx := VirtualServerEx{
+		VirtualServer: &conf_v1.VirtualServer{
+			ObjectMeta: meta_v1.ObjectMeta{
+				Name:      "cafe",
+				Namespace: "default",
+			},
+			Spec: conf_v1.VirtualServerSpec{
+				Host: "cafe.example.com",
+				Routes: []conf_v1.Route{
+					{
+						Path:  "/coffee",
+						Route: "default/coffee",
+					},
+					{
+						Path:  "/tea",
+						Route: "default/tea",
+					},
+					{
+						Path:  "/juice",
+						Route: "default/juice",
+					},
+				},
+			},
+		},
+		Endpoints: map[string][]string{
+			"default/tea-svc-v1:80": {
+				"10.0.0.20:80",
+			},
+			"default/tea-svc-v2:80": {
+				"10.0.0.21:80",
+			},
+			"default/coffee-svc-v1:80": {
+				"10.0.0.30:80",
+			},
+			"default/coffee-svc-v2:80": {
+				"10.0.0.31:80",
+			},
+			"default/juice-svc-v1:80": {
+				"10.0.0.33:80",
+			},
+			"default/juice-svc-v2:80": {
+				"10.0.0.34:80",
+			},
+		},
+		VirtualServerRoutes: []*conf_v1.VirtualServerRoute{
+			{
+				ObjectMeta: meta_v1.ObjectMeta{
+					Name:      "coffee",
+					Namespace: "default",
+				},
+				Spec: conf_v1.VirtualServerRouteSpec{
+					Host: "cafe.example.com",
+					Upstreams: []conf_v1.Upstream{
+						{
+							Name:    "coffee-v1",
+							Service: "coffee-svc-v1",
+							Port:    80,
+						},
+						{
+							Name:    "coffee-v2",
+							Service: "coffee-svc-v2",
+							Port:    80,
+						},
+					},
+					Subroutes: []conf_v1.Route{
+						{
+							Path: "/coffee",
+							Matches: []conf_v1.Match{
+								{
+									Conditions: []conf_v1.Condition{
+										{
+											Argument: "version",
+											Value:    "v2",
+										},
+									},
+									Action: &conf_v1.Action{
+										Pass: "coffee-v2",
+									},
+								},
+							},
+							Dos: "test_ns/dos_protected",
+							Action: &conf_v1.Action{
+								Pass: "coffee-v1",
+							},
+						},
+					},
+				},
+			},
+			{
+				ObjectMeta: meta_v1.ObjectMeta{
+					Name:      "tea",
+					Namespace: "default",
+				},
+				Spec: conf_v1.VirtualServerRouteSpec{
+					Host: "cafe.example.com",
+					Upstreams: []conf_v1.Upstream{
+						{
+							Name:    "tea-v1",
+							Service: "tea-svc-v1",
+							Port:    80,
+						},
+						{
+							Name:    "tea-v2",
+							Service: "tea-svc-v2",
+							Port:    80,
+						},
+					},
+					Subroutes: []conf_v1.Route{
+						{
+							Path: "/tea",
+							Dos:  "test_ns/dos_protected",
+							Action: &conf_v1.Action{
+								Pass: "tea-v1",
+							},
+						},
+					},
+				},
+			},
+			{
+				ObjectMeta: meta_v1.ObjectMeta{
+					Name:      "juice",
+					Namespace: "default",
+				},
+				Spec: conf_v1.VirtualServerRouteSpec{
+					Host: "cafe.example.com",
+					Upstreams: []conf_v1.Upstream{
+						{
+							Name:    "juice-v1",
+							Service: "juice-svc-v1",
+							Port:    80,
+						},
+						{
+							Name:    "juice-v2",
+							Service: "juice-svc-v2",
+							Port:    80,
+						},
+					},
+					Subroutes: []conf_v1.Route{
+						{
+							Path: "/juice",
+							Dos:  "test_ns/dos_protected",
+							Splits: []conf_v1.Split{
+								{
+									Weight: 80,
+									Action: &conf_v1.Action{
+										Pass: "juice-v1",
+									},
+								},
+								{
+									Weight: 20,
+									Action: &conf_v1.Action{
+										Pass: "juice-v2",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	baseCfgParams := ConfigParams{}
+
+	expected := []version2.Location{
+		{
+			Path:                     "/internal_location_matches_0_match_0",
+			ProxyPass:                "http://vs_default_cafe_vsr_default_coffee_coffee-v2$request_uri",
+			ProxyNextUpstream:        "error timeout",
+			ProxyNextUpstreamTimeout: "0s",
+			ProxyNextUpstreamTries:   0,
+			Internal:                 true,
+			ProxySSLName:             "coffee-svc-v2.default.svc",
+			ProxyPassRequestHeaders:  true,
+			ProxySetHeaders:          []version2.Header{{Name: "Host", Value: "$host"}},
+			ServiceName:              "coffee-svc-v2",
+			IsVSR:                    true,
+			VSRName:                  "coffee",
+			VSRNamespace:             "default",
+			Dos: &version2.Dos{
+				Enable:               "on",
+				Name:                 "my-dos-coffee",
+				ApDosMonitorURI:      "test.example.com",
+				ApDosMonitorProtocol: "http",
+				ApDosAccessLogDest:   "svc.dns.com:123",
+			},
+		},
+		{
+			Path:                     "/internal_location_matches_0_default",
+			ProxyPass:                "http://vs_default_cafe_vsr_default_coffee_coffee-v1$request_uri",
+			ProxyNextUpstream:        "error timeout",
+			ProxyNextUpstreamTimeout: "0s",
+			ProxyNextUpstreamTries:   0,
+			Internal:                 true,
+			ProxySSLName:             "coffee-svc-v1.default.svc",
+			ProxyPassRequestHeaders:  true,
+			ProxySetHeaders:          []version2.Header{{Name: "Host", Value: "$host"}},
+			ServiceName:              "coffee-svc-v1",
+			IsVSR:                    true,
+			VSRName:                  "coffee",
+			VSRNamespace:             "default",
+			Dos: &version2.Dos{
+				Enable:               "on",
+				Name:                 "my-dos-coffee",
+				ApDosMonitorURI:      "test.example.com",
+				ApDosMonitorProtocol: "http",
+				ApDosAccessLogDest:   "svc.dns.com:123",
+			},
+		},
+		{
+			Path:                     "/tea",
+			ProxyPass:                "http://vs_default_cafe_vsr_default_tea_tea-v1",
+			ProxyNextUpstream:        "error timeout",
+			ProxyNextUpstreamTimeout: "0s",
+			ProxyNextUpstreamTries:   0,
+			Internal:                 false,
+			ProxySSLName:             "tea-svc-v1.default.svc",
+			ProxyPassRequestHeaders:  true,
+			ProxySetHeaders:          []version2.Header{{Name: "Host", Value: "$host"}},
+			ServiceName:              "tea-svc-v1",
+			IsVSR:                    true,
+			VSRName:                  "tea",
+			VSRNamespace:             "default",
+			Dos: &version2.Dos{
+				Enable:               "on",
+				Name:                 "my-dos-tea",
+				ApDosMonitorURI:      "test.example.com",
+				ApDosMonitorProtocol: "http",
+				ApDosAccessLogDest:   "svc.dns.com:123",
+			},
+		},
+		{
+			Path:                     "/internal_location_splits_0_split_0",
+			Internal:                 true,
+			ProxyPass:                "http://vs_default_cafe_vsr_default_juice_juice-v1$request_uri",
+			ProxyNextUpstream:        "error timeout",
+			ProxyNextUpstreamTimeout: "0s",
+			ProxyPassRequestHeaders:  true,
+			ProxySetHeaders:          []version2.Header{{Name: "Host", Value: "$host"}},
+			ProxySSLName:             "juice-svc-v1.default.svc",
+			Dos: &version2.Dos{
+				Enable:               "on",
+				Name:                 "my-dos-juice",
+				ApDosMonitorURI:      "test.example.com",
+				ApDosMonitorProtocol: "http",
+				ApDosAccessLogDest:   "svc.dns.com:123",
+			},
+			ServiceName:  "juice-svc-v1",
+			IsVSR:        true,
+			VSRName:      "juice",
+			VSRNamespace: "default",
+		},
+		{
+			Path:                     "/internal_location_splits_0_split_1",
+			Internal:                 true,
+			ProxyPass:                "http://vs_default_cafe_vsr_default_juice_juice-v2$request_uri",
+			ProxyNextUpstream:        "error timeout",
+			ProxyNextUpstreamTimeout: "0s",
+			ProxyPassRequestHeaders:  true,
+			ProxySetHeaders:          []version2.Header{{Name: "Host", Value: "$host"}},
+			ProxySSLName:             "juice-svc-v2.default.svc",
+			Dos: &version2.Dos{
+				Enable:               "on",
+				Name:                 "my-dos-juice",
+				ApDosMonitorURI:      "test.example.com",
+				ApDosMonitorProtocol: "http",
+				ApDosAccessLogDest:   "svc.dns.com:123",
+			},
+			ServiceName:  "juice-svc-v2",
+			IsVSR:        true,
+			VSRName:      "juice",
+			VSRNamespace: "default",
+		},
+	}
+
+	isPlus := false
+	isResolverConfigured := false
+	vsc := newVirtualServerConfigurator(&baseCfgParams, isPlus, isResolverConfigured, &StaticConfigParams{MainAppProtectDosLoadModule: true}, false)
+
+	result, warnings := vsc.GenerateVirtualServerConfig(&virtualServerEx, nil, dosResources)
+	if diff := cmp.Diff(expected, result.Server.Locations); diff != "" {
+		t.Errorf("GenerateVirtualServerConfig() mismatch (-want +got):\n%s", diff)
+	}
+
+	if len(warnings) != 0 {
+		t.Errorf("GenerateVirtualServerConfig returned warnings: %v", vsc.warnings)
+	}
+}
+
 func TestGenerateVirtualServerConfigForVirtualServerWithReturns(t *testing.T) {
+	t.Parallel()
 	virtualServerEx := VirtualServerEx{
 		VirtualServer: &conf_v1.VirtualServer{
 			ObjectMeta: meta_v1.ObjectMeta{
@@ -1822,9 +2535,10 @@ func TestGenerateVirtualServerConfigForVirtualServerWithReturns(t *testing.T) {
 
 	isPlus := false
 	isResolverConfigured := false
-	vsc := newVirtualServerConfigurator(&baseCfgParams, isPlus, isResolverConfigured, &StaticConfigParams{})
+	isWildcardEnabled := false
+	vsc := newVirtualServerConfigurator(&baseCfgParams, isPlus, isResolverConfigured, &StaticConfigParams{}, isWildcardEnabled)
 
-	result, warnings := vsc.GenerateVirtualServerConfig(&virtualServerEx, nil)
+	result, warnings := vsc.GenerateVirtualServerConfig(&virtualServerEx, nil, nil)
 	if !reflect.DeepEqual(result, expected) {
 		t.Errorf("GenerateVirtualServerConfig returned \n%+v but expected \n%+v", result, expected)
 	}
@@ -1835,6 +2549,7 @@ func TestGenerateVirtualServerConfigForVirtualServerWithReturns(t *testing.T) {
 }
 
 func TestGeneratePolicies(t *testing.T) {
+	t.Parallel()
 	ownerDetails := policyOwnerDetails{
 		owner:          nil, // nil is OK for the unit test
 		ownerNamespace: "default",
@@ -1878,9 +2593,13 @@ func TestGeneratePolicies(t *testing.T) {
 				},
 			},
 		},
-		apResources: map[string]string{
-			"default/logconf":         "/etc/nginx/waf/nac-logconfs/default-logconf",
-			"default/dataguard-alarm": "/etc/nginx/waf/nac-policies/default-dataguard-alarm",
+		apResources: &appProtectResourcesForVS{
+			Policies: map[string]string{
+				"default/dataguard-alarm": "/etc/nginx/waf/nac-policies/default-dataguard-alarm",
+			},
+			LogConfs: map[string]string{
+				"default/logconf": "/etc/nginx/waf/nac-logconfs/default-logconf",
+			},
 		},
 	}
 
@@ -2226,7 +2945,7 @@ func TestGeneratePolicies(t *testing.T) {
 		},
 	}
 
-	vsc := newVirtualServerConfigurator(&ConfigParams{}, false, false, &StaticConfigParams{})
+	vsc := newVirtualServerConfigurator(&ConfigParams{}, false, false, &StaticConfigParams{}, false)
 
 	for _, test := range tests {
 		result := vsc.generatePolicies(ownerDetails, test.policyRefs, test.policies, test.context, policyOpts)
@@ -2240,6 +2959,7 @@ func TestGeneratePolicies(t *testing.T) {
 }
 
 func TestGeneratePoliciesFails(t *testing.T) {
+	t.Parallel()
 	ownerDetails := policyOwnerDetails{
 		owner:          nil, // nil is OK for the unit test
 		ownerNamespace: "default",
@@ -3321,9 +4041,13 @@ func TestGeneratePoliciesFails(t *testing.T) {
 				},
 			},
 			policyOpts: policyOptions{
-				apResources: map[string]string{
-					"default/logconf":         "/etc/nginx/waf/nac-logconfs/default-logconf",
-					"default/dataguard-alarm": "/etc/nginx/waf/nac-policies/default-dataguard-alarm",
+				apResources: &appProtectResourcesForVS{
+					Policies: map[string]string{
+						"default/dataguard-alarm": "/etc/nginx/waf/nac-policies/default-dataguard-alarm",
+					},
+					LogConfs: map[string]string{
+						"default/logconf": "/etc/nginx/waf/nac-logconfs/default-logconf",
+					},
 				},
 			},
 			context: "route",
@@ -3344,7 +4068,7 @@ func TestGeneratePoliciesFails(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		vsc := newVirtualServerConfigurator(&ConfigParams{}, false, false, &StaticConfigParams{})
+		vsc := newVirtualServerConfigurator(&ConfigParams{}, false, false, &StaticConfigParams{}, false)
 
 		if test.oidcPolCfg != nil {
 			vsc.oidcPolCfg = test.oidcPolCfg
@@ -3372,6 +4096,7 @@ func TestGeneratePoliciesFails(t *testing.T) {
 }
 
 func TestRemoveDuplicates(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		rlz      []version2.LimitReqZone
 		expected []version2.LimitReqZone
@@ -3413,6 +4138,7 @@ func TestRemoveDuplicates(t *testing.T) {
 }
 
 func TestAddPoliciesCfgToLocations(t *testing.T) {
+	t.Parallel()
 	cfg := policiesCfg{
 		Allow: []string{"127.0.0.1"},
 		Deny:  []string{"127.0.0.2"},
@@ -3445,6 +4171,7 @@ func TestAddPoliciesCfgToLocations(t *testing.T) {
 }
 
 func TestGenerateUpstream(t *testing.T) {
+	t.Parallel()
 	name := "test-upstream"
 	upstream := conf_v1.Upstream{Service: name, Port: 80}
 	endpoints := []string{
@@ -3477,7 +4204,7 @@ func TestGenerateUpstream(t *testing.T) {
 		UpstreamZoneSize: "256k",
 	}
 
-	vsc := newVirtualServerConfigurator(&cfgParams, false, false, &StaticConfigParams{})
+	vsc := newVirtualServerConfigurator(&cfgParams, false, false, &StaticConfigParams{}, false)
 	result := vsc.generateUpstream(nil, name, upstream, false, endpoints)
 	if !reflect.DeepEqual(result, expected) {
 		t.Errorf("generateUpstream() returned %v but expected %v", result, expected)
@@ -3489,6 +4216,7 @@ func TestGenerateUpstream(t *testing.T) {
 }
 
 func TestGenerateUpstreamWithKeepalive(t *testing.T) {
+	t.Parallel()
 	name := "test-upstream"
 	noKeepalive := 0
 	keepalive := 32
@@ -3555,7 +4283,7 @@ func TestGenerateUpstreamWithKeepalive(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		vsc := newVirtualServerConfigurator(test.cfgParams, false, false, &StaticConfigParams{})
+		vsc := newVirtualServerConfigurator(test.cfgParams, false, false, &StaticConfigParams{}, false)
 		result := vsc.generateUpstream(nil, name, test.upstream, false, endpoints)
 		if !reflect.DeepEqual(result, test.expected) {
 			t.Errorf("generateUpstream() returned %v but expected %v for the case of %v", result, test.expected, test.msg)
@@ -3568,6 +4296,7 @@ func TestGenerateUpstreamWithKeepalive(t *testing.T) {
 }
 
 func TestGenerateUpstreamForExternalNameService(t *testing.T) {
+	t.Parallel()
 	name := "test-upstream"
 	endpoints := []string{"example.com"}
 	upstream := conf_v1.Upstream{Service: name}
@@ -3586,7 +4315,7 @@ func TestGenerateUpstreamForExternalNameService(t *testing.T) {
 		Resolve: true,
 	}
 
-	vsc := newVirtualServerConfigurator(&cfgParams, true, true, &StaticConfigParams{})
+	vsc := newVirtualServerConfigurator(&cfgParams, true, true, &StaticConfigParams{}, false)
 	result := vsc.generateUpstream(nil, name, upstream, true, endpoints)
 	if !reflect.DeepEqual(result, expected) {
 		t.Errorf("generateUpstream() returned %v but expected %v", result, expected)
@@ -3598,6 +4327,7 @@ func TestGenerateUpstreamForExternalNameService(t *testing.T) {
 }
 
 func TestGenerateUpstreamWithNTLM(t *testing.T) {
+	t.Parallel()
 	name := "test-upstream"
 	upstream := conf_v1.Upstream{Service: name, Port: 80, NTLM: true}
 	endpoints := []string{
@@ -3631,7 +4361,7 @@ func TestGenerateUpstreamWithNTLM(t *testing.T) {
 		NTLM:             true,
 	}
 
-	vsc := newVirtualServerConfigurator(&cfgParams, true, false, &StaticConfigParams{})
+	vsc := newVirtualServerConfigurator(&cfgParams, true, false, &StaticConfigParams{}, false)
 	result := vsc.generateUpstream(nil, name, upstream, false, endpoints)
 	if !reflect.DeepEqual(result, expected) {
 		t.Errorf("generateUpstream() returned %v but expected %v", result, expected)
@@ -3643,6 +4373,7 @@ func TestGenerateUpstreamWithNTLM(t *testing.T) {
 }
 
 func TestGenerateProxyPass(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		tlsEnabled   bool
 		upstreamName string
@@ -3684,6 +4415,7 @@ func TestGenerateProxyPass(t *testing.T) {
 }
 
 func TestGenerateProxyPassProtocol(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		upstream conf_v1.Upstream
 		expected string
@@ -3710,7 +4442,72 @@ func TestGenerateProxyPassProtocol(t *testing.T) {
 	}
 }
 
+func TestGenerateGRPCPass(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		grpcEnabled  bool
+		tlsEnabled   bool
+		upstreamName string
+		expected     string
+	}{
+		{
+			grpcEnabled:  false,
+			tlsEnabled:   false,
+			upstreamName: "test-upstream",
+			expected:     "",
+		},
+		{
+			grpcEnabled:  true,
+			tlsEnabled:   false,
+			upstreamName: "test-upstream",
+			expected:     "grpc://test-upstream",
+		},
+		{
+			grpcEnabled:  true,
+			tlsEnabled:   true,
+			upstreamName: "test-upstream",
+			expected:     "grpcs://test-upstream",
+		},
+	}
+
+	for _, test := range tests {
+		result := generateGRPCPass(test.grpcEnabled, test.tlsEnabled, test.upstreamName)
+		if result != test.expected {
+			t.Errorf("generateGRPCPass(%v, %v, %v) returned %v but expected %v", test.grpcEnabled, test.tlsEnabled, test.upstreamName, result, test.expected)
+		}
+	}
+}
+
+func TestGenerateGRPCPassProtocol(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		upstream conf_v1.Upstream
+		expected string
+	}{
+		{
+			upstream: conf_v1.Upstream{},
+			expected: "grpc",
+		},
+		{
+			upstream: conf_v1.Upstream{
+				TLS: conf_v1.UpstreamTLS{
+					Enable: true,
+				},
+			},
+			expected: "grpcs",
+		},
+	}
+
+	for _, test := range tests {
+		result := generateGRPCPassProtocol(test.upstream.TLS.Enable)
+		if result != test.expected {
+			t.Errorf("generateGRPCPassProtocol(%v) returned %v but expected %v", test.upstream.TLS.Enable, result, test.expected)
+		}
+	}
+}
+
 func TestGenerateString(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		inputS   string
 		expected string
@@ -3734,6 +4531,7 @@ func TestGenerateString(t *testing.T) {
 }
 
 func TestGenerateSnippets(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		enableSnippets bool
 		s              string
@@ -3774,6 +4572,7 @@ func TestGenerateSnippets(t *testing.T) {
 }
 
 func TestGenerateBuffer(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		inputS   *conf_v1.UpstreamBuffers
 		expected string
@@ -3797,6 +4596,7 @@ func TestGenerateBuffer(t *testing.T) {
 }
 
 func TestGenerateLocationForProxying(t *testing.T) {
+	t.Parallel()
 	cfgParams := ConfigParams{
 		ProxyConnectTimeout:  "30s",
 		ProxyReadTimeout:     "31s",
@@ -3841,7 +4641,52 @@ func TestGenerateLocationForProxying(t *testing.T) {
 	}
 }
 
+func TestGenerateLocationForGrpcProxying(t *testing.T) {
+	t.Parallel()
+	cfgParams := ConfigParams{
+		ProxyConnectTimeout:  "30s",
+		ProxyReadTimeout:     "31s",
+		ProxySendTimeout:     "32s",
+		ClientMaxBodySize:    "1m",
+		ProxyMaxTempFileSize: "1024m",
+		ProxyBuffering:       true,
+		ProxyBuffers:         "8 4k",
+		ProxyBufferSize:      "4k",
+		LocationSnippets:     []string{"# location snippet"},
+		HTTP2:                true,
+	}
+	path := "/"
+	upstreamName := "test-upstream"
+	vsLocSnippets := []string{"# vs location snippet"}
+
+	expected := version2.Location{
+		Path:                     "/",
+		Snippets:                 vsLocSnippets,
+		ProxyConnectTimeout:      "30s",
+		ProxyReadTimeout:         "31s",
+		ProxySendTimeout:         "32s",
+		ClientMaxBodySize:        "1m",
+		ProxyMaxTempFileSize:     "1024m",
+		ProxyBuffering:           true,
+		ProxyBuffers:             "8 4k",
+		ProxyBufferSize:          "4k",
+		ProxyPass:                "http://test-upstream",
+		ProxyNextUpstream:        "error timeout",
+		ProxyNextUpstreamTimeout: "0s",
+		ProxyNextUpstreamTries:   0,
+		ProxyPassRequestHeaders:  true,
+		ProxySetHeaders:          []version2.Header{{Name: "Host", Value: "$host"}},
+		GRPCPass:                 "grpc://test-upstream",
+	}
+
+	result := generateLocationForProxying(path, upstreamName, conf_v1.Upstream{Type: "grpc"}, &cfgParams, nil, false, 0, "", nil, "", vsLocSnippets, false, "", "")
+	if diff := cmp.Diff(expected, result); diff != "" {
+		t.Errorf("generateLocationForForGrpcProxying() mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestGenerateReturnBlock(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		text        string
 		code        int
@@ -3877,6 +4722,7 @@ func TestGenerateReturnBlock(t *testing.T) {
 }
 
 func TestGenerateLocationForReturn(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		actionReturn           *conf_v1.ActionReturn
 		expectedLocation       version2.Location
@@ -3960,6 +4806,7 @@ func TestGenerateLocationForReturn(t *testing.T) {
 }
 
 func TestGenerateLocationForRedirect(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		redirect *conf_v1.ActionRedirect
 		expected version2.Location
@@ -4018,10 +4865,12 @@ func TestGenerateLocationForRedirect(t *testing.T) {
 }
 
 func TestGenerateSSLConfig(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		inputTLS         *conf_v1.TLS
 		inputSecretRefs  map[string]*secrets.SecretReference
 		inputCfgParams   *ConfigParams
+		wildcard         bool
 		expectedSSL      *version2.SSL
 		expectedWarnings Warnings
 		msg              string
@@ -4030,6 +4879,7 @@ func TestGenerateSSLConfig(t *testing.T) {
 			inputTLS:         nil,
 			inputSecretRefs:  map[string]*secrets.SecretReference{},
 			inputCfgParams:   &ConfigParams{},
+			wildcard:         false,
 			expectedSSL:      nil,
 			expectedWarnings: Warnings{},
 			msg:              "no TLS field",
@@ -4040,15 +4890,33 @@ func TestGenerateSSLConfig(t *testing.T) {
 			},
 			inputSecretRefs:  map[string]*secrets.SecretReference{},
 			inputCfgParams:   &ConfigParams{},
+			wildcard:         false,
 			expectedSSL:      nil,
 			expectedWarnings: Warnings{},
-			msg:              "TLS field with empty secret",
+			msg:              "TLS field with empty secret and wildcard cert disabled",
+		},
+		{
+			inputTLS: &conf_v1.TLS{
+				Secret: "",
+			},
+			inputSecretRefs: map[string]*secrets.SecretReference{},
+			inputCfgParams:  &ConfigParams{},
+			wildcard:        true,
+			expectedSSL: &version2.SSL{
+				HTTP2:           false,
+				Certificate:     pemFileNameForWildcardTLSSecret,
+				CertificateKey:  pemFileNameForWildcardTLSSecret,
+				RejectHandshake: false,
+			},
+			expectedWarnings: Warnings{},
+			msg:              "TLS field with empty secret and wildcard cert enabled",
 		},
 		{
 			inputTLS: &conf_v1.TLS{
 				Secret: "secret",
 			},
 			inputCfgParams: &ConfigParams{},
+			wildcard:       false,
 			inputSecretRefs: map[string]*secrets.SecretReference{
 				"default/secret": {
 					Error: errors.New("secret doesn't exist"),
@@ -4068,6 +4936,7 @@ func TestGenerateSSLConfig(t *testing.T) {
 				Secret: "secret",
 			},
 			inputCfgParams: &ConfigParams{},
+			wildcard:       false,
 			inputSecretRefs: map[string]*secrets.SecretReference{
 				"default/secret": {
 					Secret: &api_v1.Secret{
@@ -4097,6 +4966,7 @@ func TestGenerateSSLConfig(t *testing.T) {
 				},
 			},
 			inputCfgParams: &ConfigParams{},
+			wildcard:       false,
 			expectedSSL: &version2.SSL{
 				HTTP2:           false,
 				Certificate:     "secret.pem",
@@ -4111,7 +4981,7 @@ func TestGenerateSSLConfig(t *testing.T) {
 	namespace := "default"
 
 	for _, test := range tests {
-		vsc := newVirtualServerConfigurator(&ConfigParams{}, false, false, &StaticConfigParams{})
+		vsc := newVirtualServerConfigurator(&ConfigParams{}, false, false, &StaticConfigParams{}, test.wildcard)
 
 		// it is ok to use nil as the owner
 		result := vsc.generateSSLConfig(nil, test.inputTLS, namespace, test.inputSecretRefs, test.inputCfgParams)
@@ -4125,6 +4995,7 @@ func TestGenerateSSLConfig(t *testing.T) {
 }
 
 func TestGenerateRedirectConfig(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		inputTLS *conf_v1.TLS
 		expected *version2.TLSRedirect
@@ -4189,6 +5060,7 @@ func TestGenerateRedirectConfig(t *testing.T) {
 }
 
 func TestGenerateTLSRedirectBasedOn(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		basedOn  string
 		expected string
@@ -4215,6 +5087,7 @@ func TestGenerateTLSRedirectBasedOn(t *testing.T) {
 }
 
 func TestCreateUpstreamsForPlus(t *testing.T) {
+	t.Parallel()
 	virtualServerEx := VirtualServerEx{
 		VirtualServer: &conf_v1.VirtualServer{
 			ObjectMeta: meta_v1.ObjectMeta{
@@ -4403,6 +5276,7 @@ func TestCreateUpstreamsForPlus(t *testing.T) {
 }
 
 func TestCreateUpstreamServersConfigForPlus(t *testing.T) {
+	t.Parallel()
 	upstream := version2.Upstream{
 		Servers: []version2.UpstreamServer{
 			{
@@ -4429,6 +5303,7 @@ func TestCreateUpstreamServersConfigForPlus(t *testing.T) {
 }
 
 func TestCreateUpstreamServersConfigForPlusNoUpstreams(t *testing.T) {
+	t.Parallel()
 	noUpstream := version2.Upstream{}
 	expected := nginx.ServerConfig{}
 
@@ -4439,6 +5314,7 @@ func TestCreateUpstreamServersConfigForPlusNoUpstreams(t *testing.T) {
 }
 
 func TestGenerateSplits(t *testing.T) {
+	t.Parallel()
 	originalPath := "/path"
 	splits := []conf_v1.Split{
 		{
@@ -4515,7 +5391,6 @@ func TestGenerateSplits(t *testing.T) {
 			},
 		},
 	}
-
 	expectedSplitClient := version2.SplitClient{
 		Source:   "$request_id",
 		Variable: "$vs_default_cafe_splits_1",
@@ -4539,7 +5414,7 @@ func TestGenerateSplits(t *testing.T) {
 			Path:      "/internal_location_splits_1_split_0",
 			ProxyPass: "http://vs_default_cafe_coffee-v1",
 			Rewrites: []string{
-				"^ $request_uri",
+				"^ $request_uri_no_args",
 				fmt.Sprintf(`"^%v(.*)$" "/rewrite$1" break`, originalPath),
 			},
 			ProxyNextUpstream:        "error timeout",
@@ -4622,6 +5497,14 @@ func TestGenerateSplits(t *testing.T) {
 	}
 	returnLocationIndex := 1
 
+	errorPageDetails := errorPageDetails{
+		pages: errorPages,
+		index: 0,
+		owner: nil,
+	}
+
+	vsc := newVirtualServerConfigurator(&cfgParams, false, false, &StaticConfigParams{}, false)
+
 	resultSplitClient, resultLocations, resultReturnLocations := generateSplits(
 		splits,
 		upstreamNamer,
@@ -4629,8 +5512,7 @@ func TestGenerateSplits(t *testing.T) {
 		variableNamer,
 		scIndex,
 		&cfgParams,
-		errorPages,
-		0,
+		errorPageDetails,
 		originalPath,
 		locSnippet,
 		enableSnippets,
@@ -4638,19 +5520,22 @@ func TestGenerateSplits(t *testing.T) {
 		true,
 		"coffee",
 		"default",
+		vsc.warnings,
 	)
-	if !reflect.DeepEqual(resultSplitClient, expectedSplitClient) {
-		t.Errorf("generateSplits() returned \n%+v but expected \n%+v", resultSplitClient, expectedSplitClient)
+
+	if diff := cmp.Diff(expectedSplitClient, resultSplitClient); diff != "" {
+		t.Errorf("generateSplits() resultSplitClient mismatch (-want +got):\n%s", diff)
 	}
-	if !reflect.DeepEqual(resultLocations, expectedLocations) {
-		t.Errorf("generateSplits() returned \n%+v but expected \n%+v", resultLocations, expectedLocations)
+	if diff := cmp.Diff(expectedLocations, resultLocations); diff != "" {
+		t.Errorf("generateSplits() resultLocations mismatch (-want +got):\n%s", diff)
 	}
-	if !reflect.DeepEqual(resultReturnLocations, expectedReturnLocations) {
-		t.Errorf("generateSplits() returned \n%+v but expected \n%+v", resultReturnLocations, expectedReturnLocations)
+	if diff := cmp.Diff(expectedReturnLocations, resultReturnLocations); diff != "" {
+		t.Errorf("generateSplits() resultReturnLocations mismatch (-want +got):\n%s", diff)
 	}
 }
 
 func TestGenerateDefaultSplitsConfig(t *testing.T) {
+	t.Parallel()
 	route := conf_v1.Route{
 		Path: "/",
 		Splits: []conf_v1.Split{
@@ -4745,14 +5630,21 @@ func TestGenerateDefaultSplitsConfig(t *testing.T) {
 		},
 	}
 
+	errorPageDetails := errorPageDetails{
+		pages: route.ErrorPages,
+		index: 0,
+		owner: nil,
+	}
+
 	result := generateDefaultSplitsConfig(route, upstreamNamer, crUpstreams, variableNamer, index, &cfgParams,
-		route.ErrorPages, 0, "", locSnippet, enableSnippets, 0, true, "coffee", "default")
+		errorPageDetails, "", locSnippet, enableSnippets, 0, true, "coffee", "default", Warnings{})
 	if !reflect.DeepEqual(result, expected) {
 		t.Errorf("generateDefaultSplitsConfig() returned \n%+v but expected \n%+v", result, expected)
 	}
 }
 
 func TestGenerateMatchesConfig(t *testing.T) {
+	t.Parallel()
 	route := conf_v1.Route{
 		Path: "/",
 		Matches: []conf_v1.Match{
@@ -5136,6 +6028,12 @@ func TestGenerateMatchesConfig(t *testing.T) {
 		"vs_default_cafe_tea":       {Service: "tea"},
 	}
 
+	errorPageDetails := errorPageDetails{
+		pages: errorPages,
+		index: 2,
+		owner: nil,
+	}
+
 	result := generateMatchesConfig(
 		route,
 		upstreamNamer,
@@ -5144,14 +6042,14 @@ func TestGenerateMatchesConfig(t *testing.T) {
 		index,
 		scIndex,
 		&cfgParams,
-		errorPages,
-		2,
+		errorPageDetails,
 		locSnippets,
 		enableSnippets,
 		0,
 		false,
 		"",
 		"",
+		Warnings{},
 	)
 	if !reflect.DeepEqual(result, expected) {
 		t.Errorf("generateMatchesConfig() returned \n%+v but expected \n%+v", result, expected)
@@ -5159,6 +6057,7 @@ func TestGenerateMatchesConfig(t *testing.T) {
 }
 
 func TestGenerateMatchesConfigWithMultipleSplits(t *testing.T) {
+	t.Parallel()
 	route := conf_v1.Route{
 		Path: "/",
 		Matches: []conf_v1.Match{
@@ -5538,6 +6437,13 @@ func TestGenerateMatchesConfigWithMultipleSplits(t *testing.T) {
 		"vs_default_cafe_coffee-v1": {Service: "coffee-v1"},
 		"vs_default_cafe_coffee-v2": {Service: "coffee-v2"},
 	}
+
+	errorPageDetails := errorPageDetails{
+		pages: errorPages,
+		index: 0,
+		owner: nil,
+	}
+
 	result := generateMatchesConfig(
 		route,
 		upstreamNamer,
@@ -5546,14 +6452,14 @@ func TestGenerateMatchesConfigWithMultipleSplits(t *testing.T) {
 		index,
 		scIndex,
 		&cfgParams,
-		errorPages,
-		0,
+		errorPageDetails,
 		locSnippets,
 		enableSnippets,
 		0,
 		true,
 		"coffee",
 		"default",
+		Warnings{},
 	)
 	if !reflect.DeepEqual(result, expected) {
 		t.Errorf("generateMatchesConfig() returned \n%+v but expected \n%+v", result, expected)
@@ -5561,6 +6467,7 @@ func TestGenerateMatchesConfigWithMultipleSplits(t *testing.T) {
 }
 
 func TestGenerateValueForMatchesRouteMap(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input              string
 		expectedValue      string
@@ -5625,6 +6532,7 @@ func TestGenerateValueForMatchesRouteMap(t *testing.T) {
 }
 
 func TestGenerateParametersForMatchesRouteMap(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		inputMatchedValue     string
 		inputSuccessfulResult string
@@ -5669,6 +6577,7 @@ func TestGenerateParametersForMatchesRouteMap(t *testing.T) {
 }
 
 func TestGetNameForSourceForMatchesRouteMapFromCondition(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		input    conf_v1.Condition
 		expected string
@@ -5708,6 +6617,7 @@ func TestGetNameForSourceForMatchesRouteMapFromCondition(t *testing.T) {
 }
 
 func TestGenerateLBMethod(t *testing.T) {
+	t.Parallel()
 	defaultMethod := "random two least_conn"
 
 	tests := []struct {
@@ -5736,6 +6646,7 @@ func TestGenerateLBMethod(t *testing.T) {
 }
 
 func TestUpstreamHasKeepalive(t *testing.T) {
+	t.Parallel()
 	noKeepalive := 0
 	keepalive := 32
 
@@ -5774,6 +6685,7 @@ func TestUpstreamHasKeepalive(t *testing.T) {
 }
 
 func TestNewHealthCheckWithDefaults(t *testing.T) {
+	t.Parallel()
 	upstreamName := "test-upstream"
 	baseCfgParams := &ConfigParams{
 		ProxySendTimeout:    "5s",
@@ -5802,6 +6714,7 @@ func TestNewHealthCheckWithDefaults(t *testing.T) {
 }
 
 func TestGenerateHealthCheck(t *testing.T) {
+	t.Parallel()
 	upstreamName := "test-upstream"
 	tests := []struct {
 		upstream     conf_v1.Upstream
@@ -5937,6 +6850,136 @@ func TestGenerateHealthCheck(t *testing.T) {
 			},
 			msg: "HealthCheck with time parameters have correct format",
 		},
+		{
+			upstream: conf_v1.Upstream{
+				HealthCheck: &conf_v1.HealthCheck{
+					Enable:     true,
+					Mandatory:  true,
+					Persistent: true,
+				},
+				ProxyConnectTimeout: "30s",
+				ProxyReadTimeout:    "30s",
+				ProxySendTimeout:    "30s",
+			},
+			upstreamName: upstreamName,
+			expected: &version2.HealthCheck{
+				Name:                upstreamName,
+				ProxyConnectTimeout: "30s",
+				ProxyReadTimeout:    "30s",
+				ProxySendTimeout:    "30s",
+				ProxyPass:           fmt.Sprintf("http://%v", upstreamName),
+				URI:                 "/",
+				Interval:            "5s",
+				Jitter:              "0s",
+				Fails:               1,
+				Passes:              1,
+				Headers:             make(map[string]string),
+				Mandatory:           true,
+				Persistent:          true,
+			},
+			msg: "HealthCheck with mandatory and persistent set",
+		},
+	}
+
+	baseCfgParams := &ConfigParams{
+		ProxySendTimeout:    "5s",
+		ProxyReadTimeout:    "5s",
+		ProxyConnectTimeout: "5s",
+	}
+
+	for _, test := range tests {
+		result := generateHealthCheck(test.upstream, test.upstreamName, baseCfgParams)
+		if !reflect.DeepEqual(result, test.expected) {
+			t.Errorf("generateHealthCheck returned \n%v but expected \n%v \n for case: %v", result, test.expected, test.msg)
+		}
+	}
+}
+
+func TestGenerateGrpcHealthCheck(t *testing.T) {
+	t.Parallel()
+	upstreamName := "test-upstream"
+	tests := []struct {
+		upstream     conf_v1.Upstream
+		upstreamName string
+		expected     *version2.HealthCheck
+		msg          string
+	}{
+		{
+
+			upstream: conf_v1.Upstream{
+				HealthCheck: &conf_v1.HealthCheck{
+					Enable:         true,
+					Interval:       "5s",
+					Jitter:         "2s",
+					Fails:          3,
+					Passes:         2,
+					Port:           50051,
+					ConnectTimeout: "20s",
+					SendTimeout:    "20s",
+					ReadTimeout:    "20s",
+					GRPCStatus:     createPointerFromInt(12),
+					GRPCService:    "grpc-service",
+					Headers: []conf_v1.Header{
+						{
+							Name:  "Host",
+							Value: "my.service",
+						},
+						{
+							Name:  "User-Agent",
+							Value: "nginx",
+						},
+					},
+				},
+				Type: "grpc",
+			},
+			upstreamName: upstreamName,
+			expected: &version2.HealthCheck{
+				Name:                upstreamName,
+				ProxyConnectTimeout: "20s",
+				ProxySendTimeout:    "20s",
+				ProxyReadTimeout:    "20s",
+				ProxyPass:           fmt.Sprintf("http://%v", upstreamName),
+				GRPCPass:            fmt.Sprintf("grpc://%v", upstreamName),
+				Interval:            "5s",
+				Jitter:              "2s",
+				Fails:               3,
+				Passes:              2,
+				Port:                50051,
+				GRPCStatus:          createPointerFromInt(12),
+				GRPCService:         "grpc-service",
+				Headers: map[string]string{
+					"Host":       "my.service",
+					"User-Agent": "nginx",
+				},
+			},
+			msg: "HealthCheck with changed parameters",
+		},
+		{
+			upstream: conf_v1.Upstream{
+				HealthCheck: &conf_v1.HealthCheck{
+					Enable: true,
+				},
+				ProxyConnectTimeout: "30s",
+				ProxyReadTimeout:    "30s",
+				ProxySendTimeout:    "30s",
+				Type:                "grpc",
+			},
+			upstreamName: upstreamName,
+			expected: &version2.HealthCheck{
+				Name:                upstreamName,
+				ProxyConnectTimeout: "30s",
+				ProxyReadTimeout:    "30s",
+				ProxySendTimeout:    "30s",
+				ProxyPass:           fmt.Sprintf("http://%v", upstreamName),
+				GRPCPass:            fmt.Sprintf("grpc://%v", upstreamName),
+				Interval:            "5s",
+				Jitter:              "0s",
+				Fails:               1,
+				Passes:              1,
+				Headers:             make(map[string]string),
+			},
+			msg: "HealthCheck with default parameters from Upstream",
+		},
 	}
 
 	baseCfgParams := &ConfigParams{
@@ -5954,6 +6997,7 @@ func TestGenerateHealthCheck(t *testing.T) {
 }
 
 func TestGenerateEndpointsForUpstream(t *testing.T) {
+	t.Parallel()
 	name := "test"
 	namespace := "test-namespace"
 
@@ -6121,11 +7165,13 @@ func TestGenerateEndpointsForUpstream(t *testing.T) {
 	}
 
 	for _, test := range tests {
+		isWildcardEnabled := false
 		vsc := newVirtualServerConfigurator(
 			&ConfigParams{},
 			test.isPlus,
 			test.isResolverConfigured,
 			&StaticConfigParams{},
+			isWildcardEnabled,
 		)
 		result := vsc.generateEndpointsForUpstream(test.vsEx.VirtualServer, namespace, test.upstream, test.vsEx)
 		if !reflect.DeepEqual(result, test.expected) {
@@ -6150,6 +7196,7 @@ func TestGenerateEndpointsForUpstream(t *testing.T) {
 }
 
 func TestGenerateSlowStartForPlusWithInCompatibleLBMethods(t *testing.T) {
+	t.Parallel()
 	serviceName := "test-slowstart-with-incompatible-LBMethods"
 	upstream := conf_v1.Upstream{Service: serviceName, Port: 80, SlowStart: "10s"}
 	expected := ""
@@ -6165,7 +7212,7 @@ func TestGenerateSlowStartForPlusWithInCompatibleLBMethods(t *testing.T) {
 	}
 
 	for _, lbMethod := range tests {
-		vsc := newVirtualServerConfigurator(&ConfigParams{}, true, false, &StaticConfigParams{})
+		vsc := newVirtualServerConfigurator(&ConfigParams{}, true, false, &StaticConfigParams{}, false)
 		result := vsc.generateSlowStartForPlus(&conf_v1.VirtualServer{}, upstream, lbMethod)
 
 		if !reflect.DeepEqual(result, expected) {
@@ -6199,7 +7246,7 @@ func TestGenerateSlowStartForPlus(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		vsc := newVirtualServerConfigurator(&ConfigParams{}, true, false, &StaticConfigParams{})
+		vsc := newVirtualServerConfigurator(&ConfigParams{}, true, false, &StaticConfigParams{}, false)
 		result := vsc.generateSlowStartForPlus(&conf_v1.VirtualServer{}, test.upstream, test.lbMethod)
 		if !reflect.DeepEqual(result, test.expected) {
 			t.Errorf("generateSlowStartForPlus returned %v, but expected %v", result, test.expected)
@@ -6212,6 +7259,7 @@ func TestGenerateSlowStartForPlus(t *testing.T) {
 }
 
 func TestCreateEndpointsFromUpstream(t *testing.T) {
+	t.Parallel()
 	ups := version2.Upstream{
 		Servers: []version2.UpstreamServer{
 			{
@@ -6235,6 +7283,7 @@ func TestCreateEndpointsFromUpstream(t *testing.T) {
 }
 
 func TestGenerateUpstreamWithQueue(t *testing.T) {
+	t.Parallel()
 	serviceName := "test-queue"
 
 	tests := []struct {
@@ -6298,7 +7347,7 @@ func TestGenerateUpstreamWithQueue(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		vsc := newVirtualServerConfigurator(&ConfigParams{}, test.isPlus, false, &StaticConfigParams{})
+		vsc := newVirtualServerConfigurator(&ConfigParams{}, test.isPlus, false, &StaticConfigParams{}, false)
 		result := vsc.generateUpstream(nil, test.name, test.upstream, false, []string{})
 		if !reflect.DeepEqual(result, test.expected) {
 			t.Errorf("generateUpstream() returned %v but expected %v for the case of %v", result, test.expected, test.msg)
@@ -6307,6 +7356,7 @@ func TestGenerateUpstreamWithQueue(t *testing.T) {
 }
 
 func TestGenerateQueueForPlus(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		upstreamQueue *conf_v1.UpstreamQueue
 		expected      *version2.Queue
@@ -6338,6 +7388,7 @@ func TestGenerateQueueForPlus(t *testing.T) {
 }
 
 func TestGenerateSessionCookie(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		sc       *conf_v1.SessionCookie
 		expected *version2.SessionCookie
@@ -6368,6 +7419,7 @@ func TestGenerateSessionCookie(t *testing.T) {
 }
 
 func TestGeneratePath(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		path     string
 		expected string
@@ -6399,6 +7451,7 @@ func TestGeneratePath(t *testing.T) {
 }
 
 func TestGenerateErrorPageName(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		routeIndex int
 		index      int
@@ -6430,6 +7483,7 @@ func TestGenerateErrorPageName(t *testing.T) {
 }
 
 func TestGenerateErrorPageCodes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		codes    []int
 		expected string
@@ -6453,6 +7507,7 @@ func TestGenerateErrorPageCodes(t *testing.T) {
 }
 
 func TestGenerateErrorPages(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		upstreamName string
 		errorPages   []conf_v1.ErrorPage
@@ -6514,6 +7569,7 @@ func TestGenerateErrorPages(t *testing.T) {
 }
 
 func TestGenerateErrorPageLocations(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		upstreamName string
 		errorPages   []conf_v1.ErrorPage
@@ -6585,6 +7641,7 @@ func TestGenerateErrorPageLocations(t *testing.T) {
 }
 
 func TestGenerateProxySSLName(t *testing.T) {
+	t.Parallel()
 	result := generateProxySSLName("coffee-v1", "default")
 	if result != "coffee-v1.default.svc" {
 		t.Errorf("generateProxySSLName(coffee-v1, default) returned %v but expected coffee-v1.default.svc", result)
@@ -6592,6 +7649,7 @@ func TestGenerateProxySSLName(t *testing.T) {
 }
 
 func TestIsTLSEnabled(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		upstream   conf_v1.Upstream
 		spiffeCert bool
@@ -6644,22 +7702,27 @@ func TestIsTLSEnabled(t *testing.T) {
 }
 
 func TestGenerateRewrites(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		path         string
 		proxy        *conf_v1.ActionProxy
 		internal     bool
 		originalPath string
+		grpcEnabled  bool
 		expected     []string
+		msg          string
 	}{
 		{
 			proxy:    nil,
 			expected: nil,
+			msg:      "action isn't proxy",
 		},
 		{
 			proxy: &conf_v1.ActionProxy{
 				RewritePath: "",
 			},
 			expected: nil,
+			msg:      "no rewrite is configured",
 		},
 		{
 			path: "/path",
@@ -6667,6 +7730,7 @@ func TestGenerateRewrites(t *testing.T) {
 				RewritePath: "/rewrite",
 			},
 			expected: nil,
+			msg:      "non-regex rewrite for non-internal location is not needed",
 		},
 		{
 			path:     "/_internal_path",
@@ -6675,7 +7739,8 @@ func TestGenerateRewrites(t *testing.T) {
 				RewritePath: "/rewrite",
 			},
 			originalPath: "/path",
-			expected:     []string{`^ $request_uri`, `"^/path(.*)$" "/rewrite$1" break`},
+			expected:     []string{`^ $request_uri_no_args`, `"^/path(.*)$" "/rewrite$1" break`},
+			msg:          "non-regex rewrite for internal location",
 		},
 		{
 			path:     "~/regex",
@@ -6684,7 +7749,8 @@ func TestGenerateRewrites(t *testing.T) {
 				RewritePath: "/rewrite",
 			},
 			originalPath: "/path",
-			expected:     []string{`^ $request_uri`, `"^/path(.*)$" "/rewrite$1" break`},
+			expected:     []string{`^ $request_uri_no_args`, `"^/path(.*)$" "/rewrite$1" break`},
+			msg:          "regex rewrite for internal location",
 		},
 		{
 			path:     "~/regex",
@@ -6693,19 +7759,39 @@ func TestGenerateRewrites(t *testing.T) {
 				RewritePath: "/rewrite",
 			},
 			expected: []string{`"^/regex" "/rewrite" break`},
+			msg:      "regex rewrite for non-internal location",
+		},
+		{
+			path:     "/_internal_path",
+			internal: true,
+			proxy: &conf_v1.ActionProxy{
+				RewritePath: "/rewrite",
+			},
+			originalPath: "/path",
+			grpcEnabled:  true,
+			expected:     []string{`^ $request_uri_no_args`, `"^/path(.*)$" "/rewrite$1" break`},
+			msg:          "non-regex rewrite for internal location with grpc enabled",
+		},
+		{
+			path:         "/_internal_path",
+			internal:     true,
+			originalPath: "/path",
+			grpcEnabled:  true,
+			expected:     []string{`^ $request_uri break`},
+			msg:          "empty rewrite for internal location with grpc enabled",
 		},
 	}
 
 	for _, test := range tests {
-		result := generateRewrites(test.path, test.proxy, test.internal, test.originalPath)
-		if !reflect.DeepEqual(result, test.expected) {
-			t.Errorf("generateRewrites(%v, %v, %v, %v) returned \n %v but expected \n %v",
-				test.path, test.proxy, test.internal, test.originalPath, result, test.expected)
+		result := generateRewrites(test.path, test.proxy, test.internal, test.originalPath, test.grpcEnabled)
+		if diff := cmp.Diff(test.expected, result); diff != "" {
+			t.Errorf("generateRewrites() '%v' mismatch (-want +got):\n%s", test.msg, diff)
 		}
 	}
 }
 
 func TestGenerateProxyPassRewrite(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		path     string
 		proxy    *conf_v1.ActionProxy
@@ -6755,6 +7841,7 @@ func TestGenerateProxyPassRewrite(t *testing.T) {
 }
 
 func TestGenerateProxySetHeaders(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		proxy    *conf_v1.ActionProxy
 		expected []version2.Header
@@ -6893,6 +7980,7 @@ func TestGenerateProxySetHeaders(t *testing.T) {
 }
 
 func TestGenerateProxyPassRequestHeaders(t *testing.T) {
+	t.Parallel()
 	passTrue := true
 	passFalse := false
 	tests := []struct {
@@ -6942,6 +8030,7 @@ func TestGenerateProxyPassRequestHeaders(t *testing.T) {
 }
 
 func TestGenerateProxyHideHeaders(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		proxy    *conf_v1.ActionProxy
 		expected []string
@@ -6974,6 +8063,7 @@ func TestGenerateProxyHideHeaders(t *testing.T) {
 }
 
 func TestGenerateProxyPassHeaders(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		proxy    *conf_v1.ActionProxy
 		expected []string
@@ -7006,6 +8096,7 @@ func TestGenerateProxyPassHeaders(t *testing.T) {
 }
 
 func TestGenerateProxyIgnoreHeaders(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		proxy    *conf_v1.ActionProxy
 		expected string
@@ -7039,6 +8130,7 @@ func TestGenerateProxyIgnoreHeaders(t *testing.T) {
 }
 
 func TestGenerateProxyAddHeaders(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		proxy    *conf_v1.ActionProxy
 		expected []version2.AddHeader
@@ -7100,6 +8192,7 @@ func TestGenerateProxyAddHeaders(t *testing.T) {
 }
 
 func TestGetUpstreamResourceLabels(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		owner    runtime.Object
 		expected version2.UpstreamLabels
@@ -7144,11 +8237,12 @@ func TestGetUpstreamResourceLabels(t *testing.T) {
 }
 
 func TestAddWafConfig(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		wafInput     *conf_v1.WAF
 		polKey       string
 		polNamespace string
-		apResources  map[string]string
+		apResources  *appProtectResourcesForVS
 		wafConfig    *version2.WAF
 		expected     *validationResults
 		msg          string
@@ -7160,7 +8254,10 @@ func TestAddWafConfig(t *testing.T) {
 			},
 			polKey:       "default/waf-policy",
 			polNamespace: "default",
-			apResources:  map[string]string{},
+			apResources: &appProtectResourcesForVS{
+				Policies: map[string]string{},
+				LogConfs: map[string]string{},
+			},
 			wafConfig: &version2.WAF{
 				Enable: "on",
 			},
@@ -7180,9 +8277,13 @@ func TestAddWafConfig(t *testing.T) {
 			},
 			polKey:       "default/waf-policy",
 			polNamespace: "default",
-			apResources: map[string]string{
-				"default/dataguard-alarm": "/etc/nginx/waf/nac-policies/default-dataguard-alarm",
-				"default/logconf":         "/etc/nginx/waf/nac-logconfs/default-logconf",
+			apResources: &appProtectResourcesForVS{
+				Policies: map[string]string{
+					"default/dataguard-alarm": "/etc/nginx/waf/nac-policies/default-dataguard-alarm",
+				},
+				LogConfs: map[string]string{
+					"default/logconf": "/etc/nginx/waf/nac-logconfs/default-logconf",
+				},
 			},
 			wafConfig: &version2.WAF{
 				ApPolicy:            "/etc/nginx/waf/nac-policies/default-dataguard-alarm",
@@ -7205,8 +8306,11 @@ func TestAddWafConfig(t *testing.T) {
 			},
 			polKey:       "default/waf-policy",
 			polNamespace: "",
-			apResources: map[string]string{
-				"default/dataguard-alarm": "/etc/nginx/waf/nac-policies/default-dataguard-alarm",
+			apResources: &appProtectResourcesForVS{
+				Policies: map[string]string{
+					"default/dataguard-alarm": "/etc/nginx/waf/nac-policies/default-dataguard-alarm",
+				},
+				LogConfs: map[string]string{},
 			},
 			wafConfig: &version2.WAF{
 				ApPolicy:            "/etc/nginx/waf/nac-policies/default-dataguard-alarm",
@@ -7233,8 +8337,11 @@ func TestAddWafConfig(t *testing.T) {
 			},
 			polKey:       "default/waf-policy",
 			polNamespace: "",
-			apResources: map[string]string{
-				"default/logconf": "/etc/nginx/waf/nac-logconfs/default-logconf",
+			apResources: &appProtectResourcesForVS{
+				Policies: map[string]string{},
+				LogConfs: map[string]string{
+					"default/logconf": "/etc/nginx/waf/nac-logconfs/default-logconf",
+				},
 			},
 			wafConfig: &version2.WAF{
 				ApPolicy:            "/etc/nginx/waf/nac-policies/default-dataguard-alarm",
@@ -7262,9 +8369,13 @@ func TestAddWafConfig(t *testing.T) {
 			},
 			polKey:       "default/waf-policy",
 			polNamespace: "",
-			apResources: map[string]string{
-				"ns1/dataguard-alarm": "/etc/nginx/waf/nac-policies/ns1-dataguard-alarm",
-				"ns2/logconf":         "/etc/nginx/waf/nac-logconfs/ns2-logconf",
+			apResources: &appProtectResourcesForVS{
+				Policies: map[string]string{
+					"ns1/dataguard-alarm": "/etc/nginx/waf/nac-policies/ns1-dataguard-alarm",
+				},
+				LogConfs: map[string]string{
+					"ns2/logconf": "/etc/nginx/waf/nac-logconfs/ns2-logconf",
+				},
 			},
 			wafConfig: &version2.WAF{
 				ApPolicy:            "/etc/nginx/waf/nac-policies/ns1-dataguard-alarm",
@@ -7282,9 +8393,13 @@ func TestAddWafConfig(t *testing.T) {
 			},
 			polKey:       "default/waf-policy",
 			polNamespace: "default",
-			apResources: map[string]string{
-				"default/dataguard-alarm": "/etc/nginx/waf/nac-policies/ns1-dataguard-alarm",
-				"default/logconf":         "/etc/nginx/waf/nac-logconfs/ns2-logconf",
+			apResources: &appProtectResourcesForVS{
+				Policies: map[string]string{
+					"default/dataguard-alarm": "/etc/nginx/waf/nac-policies/ns1-dataguard-alarm",
+				},
+				LogConfs: map[string]string{
+					"default/logconf": "/etc/nginx/waf/nac-logconfs/ns2-logconf",
+				},
 			},
 			wafConfig: &version2.WAF{
 				Enable:   "off",
@@ -7305,6 +8420,7 @@ func TestAddWafConfig(t *testing.T) {
 }
 
 func TestGenerateTime(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		value, expected string
 	}{
@@ -7335,6 +8451,7 @@ func TestGenerateTime(t *testing.T) {
 }
 
 func TestGenerateTimeWithDefault(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		value, defaultValue, expected string
 	}{

@@ -79,7 +79,7 @@ func GetMapKeyAsUint64(m map[string]string, key string, context apiObject, nonZe
 }
 
 // GetMapKeyAsStringSlice tries to find and parse a key in the map as string slice splitting it on delimiter.
-func GetMapKeyAsStringSlice(m map[string]string, key string, context apiObject, delimiter string) ([]string, bool, error) {
+func GetMapKeyAsStringSlice(m map[string]string, key string, _ apiObject, delimiter string) ([]string, bool, error) {
 	if str, exists := m[key]; exists {
 		slice := strings.Split(str, delimiter)
 		return slice, exists, nil
@@ -180,6 +180,11 @@ func ParseInt64(s string) (int64, error) {
 // ParseUint64 ensures that the string value is a valid uint64
 func ParseUint64(s string) (uint64, error) {
 	return strconv.ParseUint(s, 10, 64)
+}
+
+// ParseFloat64 ensures that the string value is a valid float64
+func ParseFloat64(s string) (float64, error) {
+	return strconv.ParseFloat(s, 64)
 }
 
 // timeRegexp http://nginx.org/en/docs/syntax.html

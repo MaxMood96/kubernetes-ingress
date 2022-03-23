@@ -1,5 +1,8 @@
 # syntax=docker/dockerfile:1.3
-FROM python:3.9-slim
+# this is here so we can grab the latest version of kind and have dependabot keep it up to date
+FROM kindest/node:v1.23.4
+
+FROM python:3.10
 
 RUN apt-get update \
 	&& apt-get install -y curl git \
@@ -13,7 +16,8 @@ RUN pip install -r requirements.txt
 COPY deployments /workspace/deployments
 
 RUN curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl \
-	&& install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+	&& install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl \
+	&& apt-get update && apt-get install -y apache2-utils
 
 COPY tests /workspace/tests
 

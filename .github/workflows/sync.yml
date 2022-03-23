@@ -1,19 +1,22 @@
 name: Sync
 
 on:
-  push:
-    branches:
-      - master
+  workflow_run:
+    branches: master
+    workflows:
+      - "Continuous Integration"
+    types:
+      - completed
+
+concurrency:
+  group: ${{ github.ref_name }}-sync
+  cancel-in-progress: true
 
 jobs:
   # This job sync this repo to our internal repo
   repo-sync:
     runs-on: ubuntu-20.04
     steps:
-      - name: Cancel Previous Runs
-        uses: styfle/cancel-workflow-action@0.9.1
-        with:
-          access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Repo Sync
         uses: wei/git-sync@v3
         with:
@@ -29,7 +32,7 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Run CRD File Sync
         uses: BetaHuhn/repo-file-sync-action@v1
         with:
@@ -54,7 +57,7 @@ jobs:
     runs-on: ubuntu-20.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Sync Labels
         uses: micnncim/action-label-syncer@v1
         with:

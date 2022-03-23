@@ -7,8 +7,11 @@ on:
     paths-ignore:
       - 'docs/**'
       - 'examples/**'
-      - 'examples-of-custom-resources/**'
       - '**.md'
+
+concurrency:
+  group: ${{ github.ref_name }}-fossa
+  cancel-in-progress: true
 
 jobs:
 
@@ -16,12 +19,8 @@ jobs:
     name: Fossa
     runs-on: ubuntu-20.04
     steps:
-      - name: Cancel Previous Runs
-        uses: styfle/cancel-workflow-action@0.9.1
-        with:
-          access_token: ${{ secrets.GITHUB_TOKEN }}
       - name: Checkout Repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
       - name: Scan
         uses: fossas/fossa-action@v1
         with:

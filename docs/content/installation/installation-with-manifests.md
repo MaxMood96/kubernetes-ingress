@@ -1,11 +1,12 @@
 ---
 title: Installation with Manifests
-description: 
+description: "This document describes how to install the NGINX Ingress Controller in your Kubernetes cluster using Kubernetes manifests."
 weight: 1800
 doctypes: [""]
 aliases:
     - /installation/
 toc: true
+docs: "DOCS-603"
 ---
 
 
@@ -20,9 +21,8 @@ This document describes how to install the NGINX Ingress Controller in your Kube
     * It is also possible to build your own image and push it to your private Docker registry by following the instructions from [here](/nginx-ingress-controller/installation/building-ingress-controller-image).
 2. Clone the Ingress controller repo and change into the deployments folder:
     ```
-    $ git clone https://github.com/nginxinc/kubernetes-ingress/
+    $ git clone https://github.com/nginxinc/kubernetes-ingress.git --branch v2.1.1
     $ cd kubernetes-ingress/deployments
-    $ git checkout v1.12.1
     ```
 
 ## 1. Configure RBAC
@@ -42,6 +42,11 @@ This document describes how to install the NGINX Ingress Controller in your Kube
     $ kubectl apply -f rbac/ap-rbac.yaml
     ```
 
+4. (App Protect Dos only) Create the App Protect Dos role and role binding:
+
+    ```
+    $ kubectl apply -f rbac/apdos-rbac.yaml
+    ```
 **Note**: To perform this step you must be a cluster admin. Follow the documentation of your Kubernetes platform to configure the admin access. For GKE, see the [Role-Based Access Control](https://cloud.google.com/kubernetes-engine/docs/how-to/role-based-access-control) doc.
 
 ## 2. Create Common Resources
@@ -85,7 +90,7 @@ If you would like to use the TCP and UDP load balancing features of the Ingress 
     $ kubectl apply -f common/crds/k8s.nginx.org_globalconfigurations.yaml
     ```
 
-> **Feature Status**: The TransportServer, GlobalConfiguration and Policy resources are available as a preview feature: it is suitable for experimenting and testing; however, it must be used with caution in production environments. Additionally, while the feature is in preview, we might introduce some backward-incompatible changes to the resources specification in the next releases.
+> **Feature Status**: The TransportServer, GlobalConfiguration and Policy resources are available as a preview feature[^1]: We might introduce some backward-incompatible changes to the resource definition. The feature is disabled by default.
 
 ### Resources for NGINX App Protect
 
@@ -99,6 +104,18 @@ If you would like to use the App Protect module, create the following additional
    $ kubectl apply -f common/crds/appprotect.f5.com_apusersigs.yaml
    ```
 
+### Resources for NGINX App Protect Dos
+
+If you would like to use the App Protect Dos module, create the following additional resources:
+
+1. Create a custom resource definition for `APDosPolicy`, `APDosLogConf` and `DosProtectedResource`:
+
+   ```
+   $ kubectl apply -f common/crds/appprotectdos.f5.com_apdoslogconfs.yaml
+   $ kubectl apply -f common/crds/appprotectdos.f5.com_apdospolicy.yaml
+   $ kubectl apply -f common/crds/appprotectdos.f5.com_dosprotectedresources.yaml
+   ```
+
 ## 3. Deploy the Ingress Controller
 
 We include two options for deploying the Ingress controller:
@@ -106,6 +123,18 @@ We include two options for deploying the Ingress controller:
 * *DaemonSet*. Use a DaemonSet for deploying the Ingress controller on every node or a subset of nodes.
 
 > Before creating a Deployment or Daemonset resource, make sure to update the  [command-line arguments](/nginx-ingress-controller/configuration/global-configuration/command-line-arguments) of the Ingress Controller container in the corresponding manifest file according to your requirements.
+
+### Deploy Arbitrator for NGINX App Protect Dos
+If you would like to use the App Protect Dos module, need to add arbitrator deployment.
+
+* build your own image and push it to your private Docker registry by following the instructions from [here](/nginx-ingress-controller/app-protect-dos/installation#Build-the-app-protect-dos-arb-Docker-Image).
+
+* run the Arbitrator by using a Deployment and Service
+
+   ```
+   $ kubectl apply -f deployment/appprotect-dos-arb.yaml
+   $ kubectl apply -f service/appprotect-dos-arb-svc.yaml
+   ```
 
 ### 3.1 Run the Ingress Controller
 * *Use a Deployment*.
@@ -228,3 +257,7 @@ $ kubectl get pods --namespace=nginx-ingress
     ```
     $ kubectl delete -f common/crds/
     ```
+
+## Footnotes
+
+[^1]: Capabilities labeled in preview status are fully supported.

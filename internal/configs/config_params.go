@@ -53,6 +53,10 @@ type ConfigParams struct {
 	MainAppProtectCookieSeed               string
 	MainAppProtectCPUThresholds            string
 	MainAppProtectPhysicalMemoryThresholds string
+	MainAppProtectReconnectPeriod          string
+	AppProtectDosResource                  string
+	MainAppProtectDosLogFormat             []string
+	MainAppProtectDosLogFormatEscaping     string
 	ProxyBuffering                         bool
 	ProxyBuffers                           string
 	ProxyBufferSize                        string
@@ -114,6 +118,7 @@ type StaticConfigParams struct {
 	NginxServiceMesh               bool
 	EnableInternalRoutes           bool
 	MainAppProtectLoadModule       bool
+	MainAppProtectDosLoadModule    bool
 	PodName                        string
 	EnableLatencyMetrics           bool
 	EnablePreviewPolicies          bool
@@ -133,7 +138,12 @@ type Listener struct {
 }
 
 // NewDefaultConfigParams creates a ConfigParams with default values.
-func NewDefaultConfigParams() *ConfigParams {
+func NewDefaultConfigParams(isPlus bool) *ConfigParams {
+	upstreamZoneSize := "256k"
+	if isPlus {
+		upstreamZoneSize = "512k"
+	}
+
 	return &ConfigParams{
 		DefaultServerReturn:           "404",
 		ServerTokens:                  "on",
@@ -152,7 +162,7 @@ func NewDefaultConfigParams() *ConfigParams {
 		SSLPorts:                      []int{443},
 		MaxFails:                      1,
 		MaxConns:                      0,
-		UpstreamZoneSize:              "256k",
+		UpstreamZoneSize:              upstreamZoneSize,
 		FailTimeout:                   "10s",
 		LBMethod:                      "random two least_conn",
 		MainErrorLogLevel:             "notice",

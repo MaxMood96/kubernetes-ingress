@@ -12,6 +12,7 @@ func createGlobalConfigurationValidator() *GlobalConfigurationValidator {
 }
 
 func TestValidateGlobalConfiguration(t *testing.T) {
+	t.Parallel()
 	globalConfiguration := v1alpha1.GlobalConfiguration{
 		Spec: v1alpha1.GlobalConfigurationSpec{
 			Listeners: []v1alpha1.Listener{
@@ -38,6 +39,7 @@ func TestValidateGlobalConfiguration(t *testing.T) {
 }
 
 func TestValidateListenerPort(t *testing.T) {
+	t.Parallel()
 	forbiddenListenerPorts := map[int]bool{
 		1234: true,
 	}
@@ -58,6 +60,7 @@ func TestValidateListenerPort(t *testing.T) {
 }
 
 func TestValidateListeners(t *testing.T) {
+	t.Parallel()
 	listeners := []v1alpha1.Listener{
 		{
 			Name:     "tcp-listener",
@@ -75,11 +78,12 @@ func TestValidateListeners(t *testing.T) {
 
 	allErrs := gcv.validateListeners(listeners, field.NewPath("listeners"))
 	if len(allErrs) > 0 {
-		t.Errorf("validateListeners() returned errors %v for valid intput", allErrs)
+		t.Errorf("validateListeners() returned errors %v for valid input", allErrs)
 	}
 }
 
 func TestValidateListenersFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		listeners []v1alpha1.Listener
 		msg       string
@@ -127,6 +131,7 @@ func TestValidateListenersFails(t *testing.T) {
 }
 
 func TestValidateListener(t *testing.T) {
+	t.Parallel()
 	listener := v1alpha1.Listener{
 		Name:     "tcp-listener",
 		Port:     53,
@@ -137,11 +142,12 @@ func TestValidateListener(t *testing.T) {
 
 	allErrs := gcv.validateListener(listener, field.NewPath("listener"))
 	if len(allErrs) > 0 {
-		t.Errorf("validateListener() returned errors %v for valid intput", allErrs)
+		t.Errorf("validateListener() returned errors %v for valid input", allErrs)
 	}
 }
 
 func TestValidateListenerFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		Listener v1alpha1.Listener
 		msg      string
@@ -191,6 +197,7 @@ func TestValidateListenerFails(t *testing.T) {
 }
 
 func TestGeneratePortProtocolKey(t *testing.T) {
+	t.Parallel()
 	port := 53
 	protocol := "UDP"
 

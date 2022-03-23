@@ -103,6 +103,16 @@ spec:
           - -nginx-plus={{ .Values.controller.nginxplus }}
           - -nginx-reload-timeout={{ .Values.controller.nginxReloadTimeout }}
           - -enable-app-protect={{ .Values.controller.appprotect.enable }}
+{{- if and .Values.controller.appprotect.enable .Values.controller.appprotect.logLevel }}
+          - -app-protect-log-level={{ .Values.controller.appprotect.logLevel }}
+{{ end }}
+          - -enable-app-protect-dos={{ .Values.controller.appprotectdos.enable }}
+{{- if .Values.controller.appprotectdos.enable }}
+          - -app-protect-dos-debug={{ .Values.controller.appprotectdos.debug }}
+          - -app-protect-dos-max-daemons={{ .Values.controller.appprotectdos.maxWorkers }}
+          - -app-protect-dos-max-workers={{ .Values.controller.appprotectdos.maxDaemons }}
+          - -app-protect-dos-memory={{ .Values.controller.appprotectdos.memory }}
+{{ end }}
           - -nginx-configmaps=$(POD_NAMESPACE)/{{ include "nginx-ingress.configName" . }}
 {{- if .Values.controller.defaultTLS.secret }}
           - -default-server-tls-secret={{ .Values.controller.defaultTLS.secret }}
@@ -143,9 +153,9 @@ spec:
           - -prometheus-metrics-listen-port={{ .Values.prometheus.port }}
           - -prometheus-tls-secret={{ .Values.prometheus.secret }}
           - -enable-custom-resources={{ .Values.controller.enableCustomResources }}
+          - -enable-snippets={{ .Values.controller.enableSnippets }}
 {{- if .Values.controller.enableCustomResources }}
           - -enable-tls-passthrough={{ .Values.controller.enableTLSPassthrough }}
-          - -enable-snippets={{ .Values.controller.enableSnippets }}
           - -enable-preview-policies={{ .Values.controller.enablePreviewPolicies }}
 {{- if .Values.controller.globalConfiguration.create }}
           - -global-configuration=$(POD_NAMESPACE)/{{ include "nginx-ingress.name" . }}
@@ -154,4 +164,10 @@ spec:
           - -ready-status={{ .Values.controller.readyStatus.enable }}
           - -ready-status-port={{ .Values.controller.readyStatus.port }}
           - -enable-latency-metrics={{ .Values.controller.enableLatencyMetrics }}
+{{- if .Values.controller.extraContainers }}
+      {{ toYaml .Values.controller.extraContainers | nindent 6 }}
+{{- end }}
+{{- if .Values.controller.initContainers }}
+      initContainers: {{ toYaml .Values.controller.initContainers | nindent 8 }}
+{{- end }}
 {{- end }}

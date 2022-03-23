@@ -1,13 +1,15 @@
 ---
 title: Installation with the NGINX Ingress Operator
 
-description: 
+description: "This document describes how to install the NGINX Ingress Controller in your Kubernetes cluster using the NGINX Ingress Operator." 
 weight: 2000
 doctypes: [""]
 toc: true
+docs: "DOCS-604"
 ---
 
 
+**Note: an NGINX Ingress Operator version compatible with the 2.1.0 NGINX Ingress Controller release is not available yet. We will update this document and remove this note once we publish a compatible Operator version.**
 This document describes how to install the NGINX Ingress Controller in your Kubernetes cluster using the NGINX Ingress Operator.
 
 ## Prerequisites
@@ -33,7 +35,7 @@ spec:
   type: deployment
   image:
     repository: nginx/nginx-ingress
-    tag: 1.12.1
+    tag: 2.1.1
     pullPolicy: Always
   serviceType: NodePort
   nginxPlus: False

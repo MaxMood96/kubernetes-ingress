@@ -3,7 +3,7 @@ import pytest
 from settings import TEST_DATA
 from suite.custom_assertions import assert_event_and_count, assert_event_and_get_count, wait_and_assert_status_code, \
     wait_for_event_count_increases
-from suite.custom_resources_utils import create_virtual_server_from_yaml, \
+from suite.vs_vsr_resources_utils import create_virtual_server_from_yaml, \
     create_v_s_route_from_yaml, get_vs_nginx_template_conf
 from suite.fixtures import VirtualServerRoute, PublicEndpoint
 from suite.resources_utils import get_first_pod_name, get_events, \
@@ -123,12 +123,13 @@ class TestVSRWithExternalNameService:
                                                     ingress_controller_prerequisites.namespace)
 
         line = f"zone vs_{vsr_externalname_setup.namespace}_{vsr_externalname_setup.vs_name}" \
-            f"_vsr_{vsr_externalname_setup.route.namespace}_{vsr_externalname_setup.route.name}_ext-backend 256k;"
+            f"_vsr_{vsr_externalname_setup.route.namespace}_{vsr_externalname_setup.route.name}_ext-backend 512k;"
         assert line in initial_config
         assert "random two least_conn;" in initial_config
         assert f"server {vsr_externalname_setup.external_host}:80 max_fails=1 fail_timeout=10s max_conns=0 resolve;"\
                in initial_config
 
+    @pytest.mark.xfail
     def test_events_flows(self, kube_apis,
                           ingress_controller_prerequisites,
                           crd_ingress_controller,

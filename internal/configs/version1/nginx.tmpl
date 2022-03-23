@@ -44,6 +44,11 @@ http {
                       '"$http_user_agent" "$http_x_forwarded_for"';
     {{- end}}
 
+    map $upstream_trailer_grpc_status $grpc_status {
+        default $upstream_trailer_grpc_status;
+        '' $sent_http_grpc_status;
+    }
+
     {{if .AccessLogOff}}
     access_log off;
     {{else}}
@@ -68,6 +73,10 @@ http {
 
     variables_hash_bucket_size {{.VariablesHashBucketSize}};
     variables_hash_max_size {{.VariablesHashMaxSize}};
+
+    map $request_uri $request_uri_no_args {
+        "~^(?P<path>[^?]*)(\?.*)?$" $path;
+    }
 
     map $http_upgrade $connection_upgrade {
         default upgrade;

@@ -11,6 +11,7 @@ import (
 )
 
 func TestValidateVirtualServer(t *testing.T) {
+	t.Parallel()
 	virtualServer := v1.VirtualServer{
 		ObjectMeta: meta_v1.ObjectMeta{
 			Name:      "cafe",
@@ -30,6 +31,7 @@ func TestValidateVirtualServer(t *testing.T) {
 					MaxFails:  createPointerFromInt(8),
 					MaxConns:  createPointerFromInt(16),
 					Keepalive: createPointerFromInt(32),
+					Type:      "grpc",
 				},
 				{
 					Name:    "second",
@@ -51,10 +53,11 @@ func TestValidateVirtualServer(t *testing.T) {
 					},
 				},
 			},
+			Dos: "some-ns/some-name",
 		},
 	}
 
-	vsv := &VirtualServerValidator{isPlus: false}
+	vsv := &VirtualServerValidator{isPlus: false, isDosEnabled: true}
 
 	err := vsv.ValidateVirtualServer(&virtualServer)
 	if err != nil {
@@ -63,6 +66,7 @@ func TestValidateVirtualServer(t *testing.T) {
 }
 
 func TestValidateHost(t *testing.T) {
+	t.Parallel()
 	validHosts := []string{
 		"hello",
 		"example.com",
@@ -92,7 +96,62 @@ func TestValidateHost(t *testing.T) {
 	}
 }
 
+func TestValidateDos(t *testing.T) {
+	t.Parallel()
+	validDosResources := []string{
+		"hello",
+		"ns/hello",
+		"hello-world-1",
+	}
+
+	for _, h := range validDosResources {
+		allErrs := validateDos(true, h, field.NewPath("dos"))
+		if len(allErrs) > 0 {
+			t.Errorf("validateDos(%q) returned errors %v for valid input", h, allErrs)
+		}
+	}
+
+	invalidDos := []string{
+		"*",
+		"..",
+		".example.com",
+		"-hello-world-1",
+		"/hello/world-1",
+		"hello/world/other",
+	}
+
+	for _, h := range invalidDos {
+		allErrs := validateDos(true, h, field.NewPath("dos"))
+		if len(allErrs) == 0 {
+			t.Errorf("validateDos(%q) returned no errors for invalid input", h)
+		}
+	}
+}
+
+func TestValidateDosDisabled(t *testing.T) {
+	t.Parallel()
+	invalidDos := []string{
+		"hello",
+		"ns/hello",
+		"hello-world-1",
+		"*",
+		"..",
+		".example.com",
+		"-hello-world-1",
+		"/hello/world-1",
+		"hello/world/other",
+	}
+
+	for _, h := range invalidDos {
+		allErrs := validateDos(false, h, field.NewPath("dos"))
+		if len(allErrs) == 0 {
+			t.Errorf("validateDos(%q) returned no errors for invalid input", h)
+		}
+	}
+}
+
 func TestValidatePolicies(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		policies []v1.PolicyReference
 		msg      string
@@ -138,6 +197,7 @@ func TestValidatePolicies(t *testing.T) {
 }
 
 func TestValidatePoliciesFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		policies []v1.PolicyReference
 		msg      string
@@ -203,6 +263,7 @@ func TestValidatePoliciesFails(t *testing.T) {
 }
 
 func TestValidateTLS(t *testing.T) {
+	t.Parallel()
 	validTLSes := []*v1.TLS{
 		nil,
 		{
@@ -279,6 +340,7 @@ func TestValidateTLS(t *testing.T) {
 }
 
 func TestValidateUpstreams(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		upstreams             []v1.Upstream
 		expectedUpstreamNames sets.String
@@ -299,6 +361,7 @@ func TestValidateUpstreams(t *testing.T) {
 					ProxyNextUpstreamTimeout: "10s",
 					ProxyNextUpstreamTries:   5,
 					MaxConns:                 createPointerFromInt(16),
+					Type:                     "grpc",
 				},
 				{
 					Name:                     "upstream2",
@@ -308,6 +371,7 @@ func TestValidateUpstreams(t *testing.T) {
 					ProxyNextUpstream:        "error timeout",
 					ProxyNextUpstreamTimeout: "10s",
 					ProxyNextUpstreamTries:   5,
+					Type:                     "http",
 				},
 				{
 					Name:         "upstream3",
@@ -339,6 +403,7 @@ func TestValidateUpstreams(t *testing.T) {
 }
 
 func TestValidateUpstreamsFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		upstreams             []v1.Upstream
 		expectedUpstreamNames sets.String
@@ -564,6 +629,21 @@ func TestValidateUpstreamsFails(t *testing.T) {
 			},
 			msg: "invalid use of subselector with use-cluster-ip",
 		},
+		{
+			upstreams: []v1.Upstream{
+				{
+					Name:         "upstream1",
+					Service:      "test-1",
+					UseClusterIP: true,
+					Port:         80,
+					Type:         "unsupported",
+				},
+			},
+			expectedUpstreamNames: map[string]sets.Empty{
+				"upstream1": {},
+			},
+			msg: "Invalid upstream type - must be one of `grpc` or `http`",
+		},
 	}
 
 	vsv := &VirtualServerValidator{isPlus: false}
@@ -580,6 +660,7 @@ func TestValidateUpstreamsFails(t *testing.T) {
 }
 
 func TestValidateNextUpstream(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		inputS string
 	}{
@@ -599,6 +680,7 @@ func TestValidateNextUpstream(t *testing.T) {
 }
 
 func TestValidateNextUpstreamFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		inputS string
 	}{
@@ -618,6 +700,7 @@ func TestValidateNextUpstreamFails(t *testing.T) {
 }
 
 func TestValidateDNS1035Label(t *testing.T) {
+	t.Parallel()
 	validNames := []string{
 		"test",
 		"test-123",
@@ -645,6 +728,7 @@ func TestValidateDNS1035Label(t *testing.T) {
 }
 
 func TestValidateVirtualServerRoutes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		routes        []v1.Route
 		upstreamNames sets.String
@@ -682,6 +766,7 @@ func TestValidateVirtualServerRoutes(t *testing.T) {
 }
 
 func TestValidateVirtualServerRoutesFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		routes        []v1.Route
 		upstreamNames sets.String
@@ -732,6 +817,7 @@ func TestValidateVirtualServerRoutesFails(t *testing.T) {
 }
 
 func TestValidateRoute(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		route                 v1.Route
 		upstreamNames         sets.String
@@ -827,6 +913,7 @@ func TestValidateRoute(t *testing.T) {
 }
 
 func TestValidateRouteFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		route                 v1.Route
 		upstreamNames         sets.String
@@ -960,6 +1047,7 @@ func TestValidateRouteFails(t *testing.T) {
 }
 
 func TestValidateAction(t *testing.T) {
+	t.Parallel()
 	upstreamNames := map[string]sets.Empty{
 		"test": {},
 	}
@@ -1034,6 +1122,7 @@ func TestValidateAction(t *testing.T) {
 }
 
 func TestValidateActionFails(t *testing.T) {
+	t.Parallel()
 	upstreamNames := map[string]sets.Empty{}
 
 	tests := []struct {
@@ -1090,6 +1179,7 @@ func TestValidateActionFails(t *testing.T) {
 }
 
 func TestCaptureVariables(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		s        string
 		expected []string
@@ -1116,6 +1206,7 @@ func TestCaptureVariables(t *testing.T) {
 }
 
 func TestValidateRedirectURL(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		redirectURL string
 		msg         string
@@ -1165,6 +1256,7 @@ func TestValidateRedirectURL(t *testing.T) {
 }
 
 func TestValidateRedirectURLFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		redirectURL string
 		msg         string
@@ -1235,6 +1327,7 @@ func TestValidateRedirectURLFails(t *testing.T) {
 }
 
 func TestValidateRouteField(t *testing.T) {
+	t.Parallel()
 	validRouteFields := []string{
 		"coffee",
 		"default/coffee",
@@ -1262,6 +1355,7 @@ func TestValidateRouteField(t *testing.T) {
 }
 
 func TestValdateReferencedUpstream(t *testing.T) {
+	t.Parallel()
 	upstream := "test"
 	upstreamNames := map[string]sets.Empty{
 		"test": {},
@@ -1274,6 +1368,7 @@ func TestValdateReferencedUpstream(t *testing.T) {
 }
 
 func TestValdateUpstreamFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		upstream      string
 		upstreamNames sets.String
@@ -1305,6 +1400,7 @@ func TestValdateUpstreamFails(t *testing.T) {
 }
 
 func TestValidateRegexPath(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		regexPath string
 		msg       string
@@ -1332,6 +1428,7 @@ func TestValidateRegexPath(t *testing.T) {
 }
 
 func TestValidateRegexPathFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		regexPath string
 		msg       string
@@ -1363,6 +1460,7 @@ func TestValidateRegexPathFails(t *testing.T) {
 }
 
 func TestValidateRoutePath(t *testing.T) {
+	t.Parallel()
 	validPaths := []string{
 		"/",
 		"~ /^foo.*\\.jpg",
@@ -1391,6 +1489,7 @@ func TestValidateRoutePath(t *testing.T) {
 }
 
 func TestValidatePath(t *testing.T) {
+	t.Parallel()
 	validPaths := []string{
 		"/",
 		"/path",
@@ -1422,6 +1521,7 @@ func TestValidatePath(t *testing.T) {
 }
 
 func TestValidateSplits(t *testing.T) {
+	t.Parallel()
 	splits := []v1.Split{
 		{
 			Weight: 90,
@@ -1452,6 +1552,7 @@ func TestValidateSplits(t *testing.T) {
 }
 
 func TestValidateSplitsFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		splits        []v1.Split
 		upstreamNames sets.String
@@ -1568,6 +1669,7 @@ func TestValidateSplitsFails(t *testing.T) {
 }
 
 func TestValidateCondition(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		condition v1.Condition
 		msg       string
@@ -1611,6 +1713,7 @@ func TestValidateCondition(t *testing.T) {
 }
 
 func TestValidateConditionFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		condition v1.Condition
 		msg       string
@@ -1664,6 +1767,7 @@ func TestValidateConditionFails(t *testing.T) {
 }
 
 func TestIsCookieName(t *testing.T) {
+	t.Parallel()
 	validCookieNames := []string{
 		"123",
 		"my_cookie",
@@ -1691,6 +1795,7 @@ func TestIsCookieName(t *testing.T) {
 }
 
 func TestIsArgumentName(t *testing.T) {
+	t.Parallel()
 	validArgumentNames := []string{
 		"123",
 		"my_arg",
@@ -1718,6 +1823,7 @@ func TestIsArgumentName(t *testing.T) {
 }
 
 func TestValidateVariableName(t *testing.T) {
+	t.Parallel()
 	validNames := []string{
 		"$request_method",
 	}
@@ -1743,6 +1849,7 @@ func TestValidateVariableName(t *testing.T) {
 }
 
 func TestValidateMatch(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		match         v1.Match
 		upstreamNames sets.String
@@ -1807,6 +1914,7 @@ func TestValidateMatch(t *testing.T) {
 }
 
 func TestValidateMatchFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		match         v1.Match
 		upstreamNames sets.String
@@ -1899,6 +2007,7 @@ func TestValidateMatchFails(t *testing.T) {
 }
 
 func TestIsValidMatchValue(t *testing.T) {
+	t.Parallel()
 	validValues := []string{
 		"abc",
 		"123",
@@ -1931,6 +2040,7 @@ func TestIsValidMatchValue(t *testing.T) {
 }
 
 func TestValidateVirtualServerRoute(t *testing.T) {
+	t.Parallel()
 	virtualServerRoute := v1.VirtualServerRoute{
 		ObjectMeta: meta_v1.ObjectMeta{
 			Name:      "coffee",
@@ -1976,6 +2086,7 @@ func TestValidateVirtualServerRoute(t *testing.T) {
 }
 
 func TestValidateVirtualServerRouteForVirtualServer(t *testing.T) {
+	t.Parallel()
 	virtualServerRoute := v1.VirtualServerRoute{
 		ObjectMeta: meta_v1.ObjectMeta{
 			Name:      "coffee",
@@ -2023,6 +2134,7 @@ func TestValidateVirtualServerRouteForVirtualServer(t *testing.T) {
 }
 
 func TestValidateVirtualServerRouteHost(t *testing.T) {
+	t.Parallel()
 	virtualServerHost := "example.com"
 
 	validHost := "example.com"
@@ -2041,6 +2153,7 @@ func TestValidateVirtualServerRouteHost(t *testing.T) {
 }
 
 func TestValidateVirtualServerRouteSubroutes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		routes        []v1.Route
 		upstreamNames sets.String
@@ -2082,6 +2195,7 @@ func TestValidateVirtualServerRouteSubroutes(t *testing.T) {
 }
 
 func TestValidateVirtualServerRouteSubroutesFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		routes        []v1.Route
 		upstreamNames sets.String
@@ -2150,6 +2264,7 @@ func TestValidateVirtualServerRouteSubroutesFails(t *testing.T) {
 }
 
 func TestValidateUpstreamLBMethod(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		method string
 		isPlus bool
@@ -2182,6 +2297,7 @@ func TestValidateUpstreamLBMethod(t *testing.T) {
 }
 
 func TestValidateUpstreamLBMethodFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		method string
 		isPlus bool
@@ -2206,6 +2322,7 @@ func TestValidateUpstreamLBMethodFails(t *testing.T) {
 }
 
 func TestValidatePositiveIntOrZeroFromPointer(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		number *int
 		msg    string
@@ -2234,6 +2351,7 @@ func TestValidatePositiveIntOrZeroFromPointer(t *testing.T) {
 }
 
 func TestValidatePositiveIntOrZeroFromPointerFails(t *testing.T) {
+	t.Parallel()
 	number := createPointerFromInt(-1)
 	allErrs := validatePositiveIntOrZeroFromPointer(number, field.NewPath("int-field"))
 
@@ -2243,6 +2361,7 @@ func TestValidatePositiveIntOrZeroFromPointerFails(t *testing.T) {
 }
 
 func TestValidatePositiveIntOrZero(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		number int
 		msg    string
@@ -2267,6 +2386,7 @@ func TestValidatePositiveIntOrZero(t *testing.T) {
 }
 
 func TestValidatePositiveIntOrZeroFails(t *testing.T) {
+	t.Parallel()
 	allErrs := validatePositiveIntOrZero(-1, field.NewPath("int-field"))
 
 	if len(allErrs) == 0 {
@@ -2275,6 +2395,7 @@ func TestValidatePositiveIntOrZeroFails(t *testing.T) {
 }
 
 func TestValidateBuffer(t *testing.T) {
+	t.Parallel()
 	validbuff := &v1.UpstreamBuffers{Number: 8, Size: "8k"}
 	allErrs := validateBuffer(validbuff, field.NewPath("buffers-field"))
 
@@ -2305,6 +2426,7 @@ func TestValidateBuffer(t *testing.T) {
 }
 
 func TestValidateUpstreamHealthCheck(t *testing.T) {
+	t.Parallel()
 	hc := &v1.HealthCheck{
 		Enable:   true,
 		Path:     "/healthz",
@@ -2326,16 +2448,64 @@ func TestValidateUpstreamHealthCheck(t *testing.T) {
 			},
 		},
 		StatusMatch: "! 500",
+		Mandatory:   true,
+		Persistent:  true,
 	}
 
-	allErrs := validateUpstreamHealthCheck(hc, field.NewPath("healthCheck"))
+	allErrs := validateUpstreamHealthCheck(hc, "", field.NewPath("healthCheck"))
 
 	if len(allErrs) != 0 {
 		t.Errorf("validateUpstreamHealthCheck() returned errors for valid input %v", hc)
 	}
 }
 
+func TestValidateGrpcUpstreamHealthCheck(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		hc *v1.HealthCheck
+	}{
+		{
+			hc: &v1.HealthCheck{
+				Enable:   true,
+				Interval: "4s",
+				Jitter:   "2s",
+				Fails:    3,
+				Passes:   2,
+				Port:     8080,
+				TLS: &v1.UpstreamTLS{
+					Enable: true,
+				},
+				ConnectTimeout: "1s",
+				ReadTimeout:    "1s",
+				SendTimeout:    "1s",
+				Headers: []v1.Header{
+					{
+						Name:  "Host",
+						Value: "my.service",
+					},
+				},
+				GRPCStatus:  createPointerFromInt(12),
+				GRPCService: "tea-servicev2",
+			},
+		},
+		{
+			hc: &v1.HealthCheck{
+				Enable: true,
+			},
+		},
+	}
+
+	for _, test := range tests {
+		allErrs := validateUpstreamHealthCheck(test.hc, "grpc", field.NewPath("healthCheck"))
+
+		if len(allErrs) != 0 {
+			t.Errorf("validateUpstreamHealthCheck() returned errors for valid input %v", test.hc)
+		}
+	}
+}
+
 func TestValidateUpstreamHealthCheckFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		hc *v1.HealthCheck
 	}{
@@ -2351,10 +2521,71 @@ func TestValidateUpstreamHealthCheckFails(t *testing.T) {
 				Path:   "/healthz//;",
 			},
 		},
+		{
+			hc: &v1.HealthCheck{
+				Enable:     true,
+				Path:       "/healthz",
+				GRPCStatus: createPointerFromInt(12),
+			},
+		},
+		{
+			hc: &v1.HealthCheck{
+				Enable:      true,
+				Path:        "/healthz",
+				GRPCService: "tea-servicev2",
+			},
+		},
+		{
+			hc: &v1.HealthCheck{
+				Enable:     true,
+				Path:       "/healthz",
+				Persistent: true,
+			},
+		},
 	}
 
 	for _, test := range tests {
-		allErrs := validateUpstreamHealthCheck(test.hc, field.NewPath("healthCheck"))
+		allErrs := validateUpstreamHealthCheck(test.hc, "", field.NewPath("healthCheck"))
+
+		if len(allErrs) == 0 {
+			t.Errorf("validateUpstreamHealthCheck() returned no errors for invalid input %v", test.hc)
+		}
+	}
+}
+
+func TestValidateGrpcUpstreamHealthCheckFails(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		hc *v1.HealthCheck
+	}{
+		{
+			hc: &v1.HealthCheck{
+				Enable: true,
+				Path:   "/healthz",
+			},
+		},
+		{
+			hc: &v1.HealthCheck{
+				Enable:      true,
+				StatusMatch: "! 500",
+			},
+		},
+		{
+			hc: &v1.HealthCheck{
+				Enable:     true,
+				GRPCStatus: createPointerFromInt(400),
+			},
+		},
+		{
+			hc: &v1.HealthCheck{
+				Enable:      true,
+				GRPCService: "bh tyh",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		allErrs := validateUpstreamHealthCheck(test.hc, "grpc", field.NewPath("healthCheck"))
 
 		if len(allErrs) == 0 {
 			t.Errorf("validateUpstreamHealthCheck() returned no errors for invalid input %v", test.hc)
@@ -2363,6 +2594,7 @@ func TestValidateUpstreamHealthCheckFails(t *testing.T) {
 }
 
 func TestValidateStatusMatch(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		status string
 	}{
@@ -2398,6 +2630,7 @@ func TestValidateStatusMatch(t *testing.T) {
 }
 
 func TestValidateStatusMatchFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		status string
 		msg    string
@@ -2453,6 +2686,7 @@ func TestValidateStatusMatchFails(t *testing.T) {
 }
 
 func TestValidateHeader(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		header v1.Header
 	}{
@@ -2480,6 +2714,7 @@ func TestValidateHeader(t *testing.T) {
 }
 
 func TestValidateHeaderFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		header v1.Header
 		msg    string
@@ -2530,6 +2765,7 @@ func TestValidateHeaderFails(t *testing.T) {
 }
 
 func TestValidateIntFromString(t *testing.T) {
+	t.Parallel()
 	input := "404"
 	_, errMsg := validateIntFromString(input)
 
@@ -2539,6 +2775,7 @@ func TestValidateIntFromString(t *testing.T) {
 }
 
 func TestValidateIntFromStringFails(t *testing.T) {
+	t.Parallel()
 	input := "not a number"
 	_, errMsg := validateIntFromString(input)
 
@@ -2548,6 +2785,7 @@ func TestValidateIntFromStringFails(t *testing.T) {
 }
 
 func TestRejectPlusResourcesInOSS(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		upstream *v1.Upstream
 	}{
@@ -2594,6 +2832,7 @@ func TestRejectPlusResourcesInOSS(t *testing.T) {
 }
 
 func TestValidateQueue(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		upstreamQueue *v1.UpstreamQueue
 		msg           string
@@ -2621,6 +2860,7 @@ func TestValidateQueue(t *testing.T) {
 }
 
 func TestValidateQueueFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		upstreamQueue *v1.UpstreamQueue
 		msg           string
@@ -2644,6 +2884,7 @@ func TestValidateQueueFails(t *testing.T) {
 }
 
 func TestValidateSessionCookie(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		sc  *v1.SessionCookie
 		msg string
@@ -2673,6 +2914,7 @@ func TestValidateSessionCookie(t *testing.T) {
 }
 
 func TestValidateSessionCookieFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		sc  *v1.SessionCookie
 		msg string
@@ -2707,6 +2949,7 @@ func TestValidateSessionCookieFails(t *testing.T) {
 }
 
 func TestValidateRedirectStatusCode(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		code int
 	}{
@@ -2724,6 +2967,7 @@ func TestValidateRedirectStatusCode(t *testing.T) {
 }
 
 func TestValidateRedirectStatusCodeFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		code int
 	}{
@@ -2740,6 +2984,7 @@ func TestValidateRedirectStatusCodeFails(t *testing.T) {
 }
 
 func TestIsRegexOrExactMatch(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		path     string
 		expected bool
@@ -2767,6 +3012,7 @@ func TestIsRegexOrExactMatch(t *testing.T) {
 }
 
 func TestValidateEscapedStringWithVariables(t *testing.T) {
+	t.Parallel()
 	specialVariables := []string{"http_"}
 	variables := map[string]bool{
 		"request_uri": true,
@@ -2815,6 +3061,7 @@ func TestValidateEscapedStringWithVariables(t *testing.T) {
 }
 
 func TestValidateEscapedStringWithVariablesFails(t *testing.T) {
+	t.Parallel()
 	specialVariables := []string{"http_"}
 	variables := map[string]bool{
 		"request_uri": true,
@@ -2858,6 +3105,7 @@ func TestValidateEscapedStringWithVariablesFails(t *testing.T) {
 }
 
 func TestValidateActionReturnType(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		defaultType string
 		msg         string
@@ -2881,6 +3129,7 @@ func TestValidateActionReturnType(t *testing.T) {
 }
 
 func TestValidateActionReturnTypeFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		defaultType string
 		msg         string
@@ -2908,6 +3157,7 @@ func TestValidateActionReturnTypeFails(t *testing.T) {
 }
 
 func TestValidateActionReturn(t *testing.T) {
+	t.Parallel()
 	tests := []*v1.ActionReturn{
 		{
 			Body: "Hello World",
@@ -2940,6 +3190,7 @@ func TestValidateActionReturn(t *testing.T) {
 }
 
 func TestValidateActionReturnFails(t *testing.T) {
+	t.Parallel()
 	tests := []*v1.ActionReturn{
 		{},
 		{
@@ -2970,6 +3221,7 @@ func TestValidateActionReturnFails(t *testing.T) {
 }
 
 func TestValidateActionProxy(t *testing.T) {
+	t.Parallel()
 	upstreamNames := map[string]sets.Empty{
 		"upstream1": {},
 	}
@@ -2989,6 +3241,7 @@ func TestValidateActionProxy(t *testing.T) {
 }
 
 func TestValidateActionProxyFails(t *testing.T) {
+	t.Parallel()
 	upstreamNames := map[string]sets.Empty{
 		"upstream1": {},
 	}
@@ -3007,6 +3260,7 @@ func TestValidateActionProxyFails(t *testing.T) {
 }
 
 func TestValidateActionProxyRewritePath(t *testing.T) {
+	t.Parallel()
 	tests := []string{"/rewrite", "/rewrite", `/$2`}
 	for _, test := range tests {
 		allErrs := validateActionProxyRewritePath(test, field.NewPath("rewritePath"))
@@ -3017,6 +3271,7 @@ func TestValidateActionProxyRewritePath(t *testing.T) {
 }
 
 func TestValidateActionProxyRewritePathFails(t *testing.T) {
+	t.Parallel()
 	tests := []string{`/\d{3}`, `(`, "$request_uri"}
 	for _, test := range tests {
 		allErrs := validateActionProxyRewritePath(test, field.NewPath("rewritePath"))
@@ -3027,6 +3282,7 @@ func TestValidateActionProxyRewritePathFails(t *testing.T) {
 }
 
 func TestValidateActionProxyRewritePathForRegexp(t *testing.T) {
+	t.Parallel()
 	tests := []string{"/rewrite$1", "test", `/$2`, `\"test\"`}
 	for _, test := range tests {
 		allErrs := validateActionProxyRewritePathForRegexp(test, field.NewPath("rewritePath"))
@@ -3037,6 +3293,7 @@ func TestValidateActionProxyRewritePathForRegexp(t *testing.T) {
 }
 
 func TestValidateActionProxyRewritePathForRegexpFails(t *testing.T) {
+	t.Parallel()
 	tests := []string{"$request_uri", `"test"`, `test\`}
 	for _, test := range tests {
 		allErrs := validateActionProxyRewritePathForRegexp(test, field.NewPath("rewritePath"))
@@ -3047,6 +3304,7 @@ func TestValidateActionProxyRewritePathForRegexpFails(t *testing.T) {
 }
 
 func TestValidateActionProxyHeader(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		header v1.Header
 	}{
@@ -3094,6 +3352,7 @@ func TestValidateActionProxyHeader(t *testing.T) {
 }
 
 func TestValidateActionProxyHeaderFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		header v1.Header
 		msg    string
@@ -3154,6 +3413,7 @@ func TestValidateActionProxyHeaderFails(t *testing.T) {
 }
 
 func TestValidateActionProxyRequestHeaders(t *testing.T) {
+	t.Parallel()
 	requestHeaders := &v1.ProxyRequestHeaders{
 		Set: []v1.Header{
 			{
@@ -3180,6 +3440,7 @@ func TestValidateActionProxyRequestHeaders(t *testing.T) {
 }
 
 func TestValidateActionProxyRequestHeadersFails(t *testing.T) {
+	t.Parallel()
 	invalidHeaders := []*v1.ProxyRequestHeaders{
 		{
 			Set: []v1.Header{
@@ -3226,6 +3487,7 @@ func TestValidateActionProxyRequestHeadersFails(t *testing.T) {
 }
 
 func TestValidateActionProxyResponseHeaders(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		responseHeaders *v1.ProxyResponseHeaders
 	}{
@@ -3298,6 +3560,7 @@ func TestValidateActionProxyResponseHeaders(t *testing.T) {
 }
 
 func TestValidateActionProxyResponseHeadersFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		responseHeaders *v1.ProxyResponseHeaders
 		msg             string
@@ -3377,6 +3640,7 @@ func TestValidateActionProxyResponseHeadersFails(t *testing.T) {
 }
 
 func TestValidateIgnoreHeaders(t *testing.T) {
+	t.Parallel()
 	var ignoreHeaders []string
 
 	for header := range validIgnoreHeaders {
@@ -3390,6 +3654,7 @@ func TestValidateIgnoreHeaders(t *testing.T) {
 }
 
 func TestValidateIgnoreHeadersFails(t *testing.T) {
+	t.Parallel()
 	ignoreHeaders := []string{
 		"Host",
 		"Connection",
@@ -3402,6 +3667,7 @@ func TestValidateIgnoreHeadersFails(t *testing.T) {
 }
 
 func TestValidateStringNoVariables(t *testing.T) {
+	t.Parallel()
 	tests := []string{
 		"string",
 		"endWith$",
@@ -3420,6 +3686,7 @@ func TestValidateStringNoVariables(t *testing.T) {
 }
 
 func TestValidateStringNoVariablesFails(t *testing.T) {
+	t.Parallel()
 	tests := []string{
 		"$var",
 		"abcйй$й",
@@ -3435,6 +3702,7 @@ func TestValidateStringNoVariablesFails(t *testing.T) {
 }
 
 func TestValidateActionReturnCode(t *testing.T) {
+	t.Parallel()
 	codes := []int{200, 201, 400, 404, 500, 502, 599}
 	for _, c := range codes {
 		allErrs := validateActionReturnCode(c, field.NewPath("code"))
@@ -3445,6 +3713,7 @@ func TestValidateActionReturnCode(t *testing.T) {
 }
 
 func TestValidateActionReturnCodeFails(t *testing.T) {
+	t.Parallel()
 	codes := []int{0, -1, 199, 300, 399, 600, 999}
 	for _, c := range codes {
 		allErrs := validateActionReturnCode(c, field.NewPath("code"))
@@ -3455,6 +3724,7 @@ func TestValidateActionReturnCodeFails(t *testing.T) {
 }
 
 func TestErrorPageHasRequiredFields(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		errorPage v1.ErrorPage
 		expected  bool
@@ -3502,6 +3772,7 @@ func TestErrorPageHasRequiredFields(t *testing.T) {
 }
 
 func TestValidateErrorPage(t *testing.T) {
+	t.Parallel()
 	tests := []v1.ErrorPage{
 		{
 			Codes: []int{400, 404},
@@ -3534,6 +3805,7 @@ func TestValidateErrorPage(t *testing.T) {
 }
 
 func TestValidateErrorPageFails(t *testing.T) {
+	t.Parallel()
 	tests := []v1.ErrorPage{
 		{},
 		{
@@ -3564,6 +3836,7 @@ func TestValidateErrorPageFails(t *testing.T) {
 }
 
 func TestValidateErrorPageReturn(t *testing.T) {
+	t.Parallel()
 	tests := []v1.ErrorPageReturn{
 		{
 			ActionReturn: v1.ActionReturn{
@@ -3608,6 +3881,7 @@ func TestValidateErrorPageReturn(t *testing.T) {
 }
 
 func TestValidateErrorPageReturnFails(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		msg string
 		epr v1.ErrorPageReturn
@@ -3671,6 +3945,7 @@ func TestValidateErrorPageReturnFails(t *testing.T) {
 }
 
 func TestValidateErrorPageRedirect(t *testing.T) {
+	t.Parallel()
 	tests := []v1.ErrorPageRedirect{
 		{
 			ActionRedirect: v1.ActionRedirect{
@@ -3698,6 +3973,7 @@ func TestValidateErrorPageRedirect(t *testing.T) {
 }
 
 func TestValidateErrorPageRedirectFails(t *testing.T) {
+	t.Parallel()
 	tests := []v1.ErrorPageRedirect{
 		{
 			ActionRedirect: v1.ActionRedirect{
@@ -3743,6 +4019,7 @@ func TestValidateErrorPageRedirectFails(t *testing.T) {
 }
 
 func TestValidateErrorPageHeader(t *testing.T) {
+	t.Parallel()
 	tests := []v1.Header{
 		{
 			Name:  "Header-Name",
@@ -3769,6 +4046,7 @@ func TestValidateErrorPageHeader(t *testing.T) {
 }
 
 func TestValidateErrorPageHeaderFails(t *testing.T) {
+	t.Parallel()
 	tests := []v1.Header{
 		{
 			Name:  "",

@@ -1,5 +1,53 @@
 # Changelog
 
+### 2.1.1
+
+An automatically generated list of changes can be found on Github at: [2.1.1 Release](https://github.com/nginxinc/kubernetes-ingress/releases/tag/v2.1.1)
+
+A curated list of changes can be found in the [Releases](http://docs.nginx.com/nginx-ingress-controller/releases/) page on NGINX Documentation website.
+
+### 2.1.0
+
+An automatically generated list of changes can be found on Github at: [2.1.0 Release](https://github.com/nginxinc/kubernetes-ingress/releases/tag/v2.1.0)
+
+A curated list of changes can be found in the [Releases](http://docs.nginx.com/nginx-ingress-controller/releases/) page on NGINX Documentation website.
+
+### 2.0.3
+
+An automatically generated list of changes can be found on Github at: [2.0.3 Release](https://github.com/nginxinc/kubernetes-ingress/releases/tag/v2.0.3)
+
+A curated list of changes can be found in the [Releases](http://docs.nginx.com/nginx-ingress-controller/releases/) page on NGINX Documentation website.
+
+### 1.12.3
+
+An automatically generated list of changes can be found on Github at: [1.12.3 Release](https://github.com/nginxinc/kubernetes-ingress/releases/tag/v1.12.3)
+
+A curated list of changes can be found in the [Releases](http://docs.nginx.com/nginx-ingress-controller/releases/) page on NGINX Documentation website.
+
+### 2.0.2
+
+An automatically generated list of changes can be found on Github at: [2.0.2 Release](https://github.com/nginxinc/kubernetes-ingress/releases/tag/v2.0.2)
+
+A curated list of changes can be found in the [Releases](http://docs.nginx.com/nginx-ingress-controller/releases/) page on NGINX Documentation website.
+
+### 2.0.1
+
+An automatically generated list of changes can be found on Github at: [2.0.1 Release](https://github.com/nginxinc/kubernetes-ingress/releases/tag/v2.0.1)
+
+A curated list of changes can be found in the [Releases](http://docs.nginx.com/nginx-ingress-controller/releases/) page on NGINX Documentation website.
+
+### 1.12.2
+
+An automatically generated list of changes can be found on Github at: [1.12.2 Release](https://github.com/nginxinc/kubernetes-ingress/releases/tag/v1.12.2)
+
+A curated list of changes can be found in the [Releases](http://docs.nginx.com/nginx-ingress-controller/releases/) page on NGINX Documentation website.
+
+### 2.0.0
+
+An automatically generated list of changes can be found on Github at: [2.0.0 Release](https://github.com/nginxinc/kubernetes-ingress/releases/tag/v2.0.0)
+
+A curated list of changes can be found in the [Releases](http://docs.nginx.com/nginx-ingress-controller/releases/) page on NGINX Documentation website.
+
 ### 1.12.1
 
 An automatically generated list of changes can be found on Github at: [1.12.1 Release](https://github.com/nginxinc/kubernetes-ingress/releases/tag/v1.12.1)
@@ -275,7 +323,7 @@ BUGFIXES:
 HELM CHART:
 * The version of the helm chart is now 0.6.0.
 * Add new parameters to the Chart: `controller.appprotect.enable`, `controller.globalConfiguration.create`, `controller.globalConfiguration.spec`, `controller.readyStatus.enable`, `controller.readyStatus.port`, `controller.config.annotations`, `controller.reportIngressStatus.annotations`. Added in  [1035](https://github.com/nginxinc/kubernetes-ingress/pull/1035), [1034](https://github.com/nginxinc/kubernetes-ingress/pull/1034), [1029](https://github.com/nginxinc/kubernetes-ingress/pull/1029), [1003](https://github.com/nginxinc/kubernetes-ingress/pull/1003) thanks to [RubyLangdon](https://github.com/RubyLangdon).
-* [1047](https://github.com/nginxinc/kubernetes-ingress/pull/1047) and [1009](https://github.com/nginxinc/kubernetes-ingress/pull/1009): Change how Helm manages the custom resource defintions (CRDs) to support installing multiple Ingress Controller releases. **Note**: If you're using the custom resources (`controller.enableCustomResources` is set to `true`), this is a breaking change. See the HELM UPGRADE section below for the upgrade instructions.
+* [1047](https://github.com/nginxinc/kubernetes-ingress/pull/1047) and [1009](https://github.com/nginxinc/kubernetes-ingress/pull/1009): Change how Helm manages the custom resource definitions (CRDs) to support installing multiple Ingress Controller releases. **Note**: If you're using the custom resources (`controller.enableCustomResources` is set to `true`), this is a breaking change. See the HELM UPGRADE section below for the upgrade instructions.
 
 CHANGES:
 * Update NGINX version to 1.19.1.

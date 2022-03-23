@@ -312,6 +312,13 @@ func compareObjectMetasWithAnnotations(meta1 *metav1.ObjectMeta, meta2 *metav1.O
 	return compareObjectMetas(meta1, meta2) && reflect.DeepEqual(meta1.Annotations, meta2.Annotations)
 }
 
+// TransportServerMetrics holds metrics about TransportServer resources
+type TransportServerMetrics struct {
+	TotalTLSPassthrough int
+	TotalTCP            int
+	TotalUDP            int
+}
+
 // Configuration represents the configuration of the Ingress Controller - a collection of configuration objects
 // (Ingresses, VirtualServers, VirtualServerRoutes) ready to be transformed into NGINX config.
 // It holds the latest valid state of those objects.
@@ -343,11 +350,14 @@ type Configuration struct {
 	policyReferenceChecker     *policyReferenceChecker
 	appPolicyReferenceChecker  *appProtectResourceReferenceChecker
 	appLogConfReferenceChecker *appProtectResourceReferenceChecker
+	appDosProtectedChecker     *dosResourceReferenceChecker
 
 	isPlus                  bool
 	appProtectEnabled       bool
+	appProtectDosEnabled    bool
 	internalRoutesEnabled   bool
 	isTLSPassthroughEnabled bool
+	snippetsEnabled         bool
 
 	lock sync.RWMutex
 }
@@ -357,11 +367,13 @@ func NewConfiguration(
 	hasCorrectIngressClass func(interface{}) bool,
 	isPlus bool,
 	appProtectEnabled bool,
+	appProtectDosEnabled bool,
 	internalRoutesEnabled bool,
 	virtualServerValidator *validation.VirtualServerValidator,
 	globalConfigurationValidator *validation.GlobalConfigurationValidator,
 	transportServerValidator *validation.TransportServerValidator,
 	isTLSPassthroughEnabled bool,
+	snippetsEnabled bool,
 ) *Configuration {
 	return &Configuration{
 		hosts:                        make(map[string]Resource),
@@ -381,10 +393,13 @@ func NewConfiguration(
 		policyReferenceChecker:       newPolicyReferenceChecker(),
 		appPolicyReferenceChecker:    newAppProtectResourceReferenceChecker(configs.AppProtectPolicyAnnotation),
 		appLogConfReferenceChecker:   newAppProtectResourceReferenceChecker(configs.AppProtectLogConfAnnotation),
+		appDosProtectedChecker:       newDosResourceReferenceChecker(configs.AppProtectDosProtectedAnnotation),
 		isPlus:                       isPlus,
 		appProtectEnabled:            appProtectEnabled,
+		appProtectDosEnabled:         appProtectDosEnabled,
 		internalRoutesEnabled:        internalRoutesEnabled,
 		isTLSPassthroughEnabled:      isTLSPassthroughEnabled,
+		snippetsEnabled:              snippetsEnabled,
 	}
 }
 
@@ -399,7 +414,7 @@ func (c *Configuration) AddOrUpdateIngress(ing *networking.Ingress) ([]ResourceC
 	if !c.hasCorrectIngressClass(ing) {
 		delete(c.ingresses, key)
 	} else {
-		validationError = validateIngress(ing, c.isPlus, c.appProtectEnabled, c.internalRoutesEnabled).ToAggregate()
+		validationError = validateIngress(ing, c.isPlus, c.appProtectEnabled, c.appProtectDosEnabled, c.internalRoutesEnabled, c.snippetsEnabled).ToAggregate()
 		if validationError != nil {
 			delete(c.ingresses, key)
 		} else {
@@ -852,6 +867,11 @@ func (c *Configuration) FindResourcesForAppProtectPolicyAnnotation(policyNamespa
 // FindResourcesForAppProtectLogConfAnnotation finds resources that reference the specified AppProtect LogConf.
 func (c *Configuration) FindResourcesForAppProtectLogConfAnnotation(logConfNamespace string, logConfName string) []Resource {
 	return c.findResourcesForResourceReference(logConfNamespace, logConfName, c.appLogConfReferenceChecker)
+}
+
+// FindResourcesForAppProtectDosProtected finds resources that reference the specified AppProtectDos DosLogConf.
+func (c *Configuration) FindResourcesForAppProtectDosProtected(namespace string, name string) []Resource {
+	return c.findResourcesForResourceReference(namespace, name, c.appDosProtectedChecker)
 }
 
 func (c *Configuration) findResourcesForResourceReference(namespace string, name string, checker resourceReferenceChecker) []Resource {
@@ -1437,6 +1457,30 @@ func (c *Configuration) buildVirtualServerRoutes(vs *conf_v1.VirtualServer) ([]*
 	}
 
 	return vsrs, warnings
+}
+
+// GetTransportServerMetrics returns metrics about TransportServers
+func (c *Configuration) GetTransportServerMetrics() *TransportServerMetrics {
+	var metrics TransportServerMetrics
+
+	if c.isTLSPassthroughEnabled {
+		for _, resource := range c.hosts {
+			_, ok := resource.(*TransportServerConfiguration)
+			if ok {
+				metrics.TotalTLSPassthrough++
+			}
+		}
+	}
+
+	for _, tsConfig := range c.listeners {
+		if tsConfig.TransportServer.Spec.Listener.Protocol == "TCP" {
+			metrics.TotalTCP++
+		} else {
+			metrics.TotalUDP++
+		}
+	}
+
+	return &metrics
 }
 
 func getSortedIngressKeys(m map[string]*networking.Ingress) []string {

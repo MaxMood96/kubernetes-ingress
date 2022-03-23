@@ -5,8 +5,11 @@ from kubernetes.client.rest import ApiException
 from settings import TEST_DATA
 from suite.custom_assertions import assert_event_and_get_count, assert_event_count_increased, assert_response_codes, \
     assert_event, assert_event_starts_with_text_and_contains_errors, assert_vs_conf_not_exists
-from suite.custom_resources_utils import get_vs_nginx_template_conf, patch_virtual_server_from_yaml, \
-    patch_virtual_server, generate_item_with_upstream_options
+from suite.vs_vsr_resources_utils import get_vs_nginx_template_conf, patch_virtual_server_from_yaml, \
+    patch_virtual_server
+from suite.custom_resources_utils import (
+    generate_item_with_upstream_options,
+)
 from suite.resources_utils import get_first_pod_name, wait_before_test, replace_configmap_from_yaml, get_events
 
 
@@ -299,7 +302,7 @@ class TestVirtualServerUpstreamOptionValidation:
 class TestOptionsSpecificForPlus:
     @pytest.mark.parametrize('options, expected_strings', [
         ({"lb-method": "least_conn",
-          "healthCheck": {"enable": True, "port": 8080},
+          "healthCheck": {"enable": True, "mandatory": True, "persistent": True},
           "slow-start": "3h",
           "queue": {"size": 100},
           "ntlm": True,
@@ -308,7 +311,7 @@ class TestOptionsSpecificForPlus:
                             "path": "/some-valid/path",
                             "expires": "max",
                             "domain": "virtual-server-route.example.com", "httpOnly": True, "secure": True}},
-         ["health_check uri=/ port=8080 interval=5s jitter=0s", "fails=1 passes=1;",
+         ["health_check uri=/ interval=5s jitter=0s", "fails=1 passes=1", "mandatory persistent", ";",
           "slow_start=3h", "queue 100 timeout=60s;", "ntlm;",
           "sticky cookie TestCookie expires=max domain=virtual-server-route.example.com httponly secure path=/some-valid/path;"]),
         ({"lb-method": "least_conn",
@@ -394,7 +397,8 @@ class TestOptionsSpecificForPlus:
             "upstreams[0].healthCheck.connect-timeout",
             "upstreams[0].healthCheck.read-timeout", "upstreams[0].healthCheck.send-timeout",
             "upstreams[0].healthCheck.headers[0].name", "upstreams[0].healthCheck.headers[0].value",
-            "upstreams[0].healthCheck.statusMatch",
+            "upstreams[0].healthCheck.statusMatch", "upstreams[0].healthCheck.grpcStatus",
+            "upstreams[0].healthCheck.grpcService", "upstreams[0].healthCheck.mandatory",
             "upstreams[0].slow-start",
             "upstreams[0].queue.size", "upstreams[0].queue.timeout",
             "upstreams[0].sessionCookie.name", "upstreams[0].sessionCookie.path",

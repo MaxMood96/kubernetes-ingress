@@ -5,7 +5,7 @@ from kubernetes.client.rest import ApiException
 from settings import TEST_DATA
 from suite.custom_assertions import assert_event_and_count, assert_event_and_get_count, \
     assert_event_with_full_equality_and_count
-from suite.custom_resources_utils import create_virtual_server_from_yaml, \
+from suite.vs_vsr_resources_utils import create_virtual_server_from_yaml, \
     delete_virtual_server, create_v_s_route_from_yaml, delete_v_s_route, get_vs_nginx_template_conf, \
     patch_v_s_route_from_yaml
 from suite.resources_utils import delete_service, get_first_pod_name, get_events, \
@@ -40,6 +40,7 @@ def assert_locations_not_in_config(config, paths):
                            {"example": "virtual-server-route"})],
                          indirect=True)
 class TestVirtualServerRoute:
+    @pytest.mark.flaky(max_runs=3)
     def test_responses_and_events_in_flow(self, kube_apis,
                                           ingress_controller_prerequisites,
                                           crd_ingress_controller,
@@ -364,6 +365,7 @@ class TestVirtualServerRouteValidation:
 
 
 @pytest.mark.vsr
+@pytest.mark.flaky(max_runs=3)
 @pytest.mark.parametrize('crd_ingress_controller, v_s_route_setup',
                          [({"type": "complete", "extra_args": [f"-enable-custom-resources"]},
                            {"example": "virtual-server-route"})],

@@ -2,11 +2,11 @@ package nginx
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,10 +17,14 @@ import (
 )
 
 const (
-	ReloadForEndpointsUpdate     = true  // ReloadForEndpointsUpdate means that is caused by an endpoints update.
-	ReloadForOtherUpdate         = false // ReloadForOtherUpdate means that a reload is caused by an update for a resource(s) other than endpoints.
-	TLSSecretFileMode            = 0o600 // TLSSecretFileMode defines the default filemode for files with TLS Secrets.
-	JWKSecretFileMode            = 0o644 // JWKSecretFileMode defines the default filemode for files with JWK Secrets.
+	// ReloadForEndpointsUpdate means that is caused by an endpoints update.
+	ReloadForEndpointsUpdate = true
+	// ReloadForOtherUpdate means that a reload is caused by an update for a resource(s) other than endpoints.
+	ReloadForOtherUpdate = false
+	// TLSSecretFileMode defines the default filemode for files with TLS Secrets.
+	TLSSecretFileMode = 0o600
+	// JWKSecretFileMode defines the default filemode for files with JWK Secrets.
+	JWKSecretFileMode            = 0o644
 	configFileMode               = 0o644
 	jsonFileForOpenTracingTracer = "/var/lib/nginx/tracer-config.json"
 	nginxBinaryPath              = "/usr/sbin/nginx"
@@ -28,15 +32,14 @@ const (
 
 	appProtectPluginStartCmd = "/usr/share/ts/bin/bd-socket-plugin"
 	appProtectAgentStartCmd  = "/opt/app_protect/bin/bd_agent"
+	appProtectLogLevelCmd    = "/opt/app_protect/bin/set_log_level"
 
 	// appPluginParams is the configuration of App-Protect plugin
 	appPluginParams = "tmm_count 4 proc_cpuinfo_cpu_mhz 2000000 total_xml_memory 307200000 total_umu_max_size 3129344 sys_max_account_id 1024 no_static_config"
 
-	// appProtectDebugLogConfigFileContent holds the content of the file to be written when nginx debug is enabled. It will enable NGINX App Protect debug logs
-	appProtectDebugLogConfigFileContent = "MODULE = IO_PLUGIN;\nLOG_LEVEL = TS_INFO | TS_DEBUG;\nFILE = 2;\nMODULE = ECARD_POLICY;\nLOG_LEVEL = TS_INFO | TS_DEBUG;\nFILE = 2;\n"
-
-	// appProtectLogConfigFileName is the location of the NGINX App Protect logging configuration file
-	appProtectLogConfigFileName = "/etc/app_protect/bd/logger.cfg"
+	appProtectDosAgentInstallCmd    = "/usr/bin/adminstall"
+	appProtectDosAgentStartCmd      = "/usr/bin/admd -d --standalone"
+	appProtectDosAgentStartDebugCmd = "/usr/bin/admd -d --standalone --log debug"
 )
 
 // ServerConfig holds the config data for an upstream server in NGINX Plus.
@@ -73,10 +76,12 @@ type Manager interface {
 	UpdateServersInPlus(upstream string, servers []string, config ServerConfig) error
 	UpdateStreamServersInPlus(upstream string, servers []string) error
 	SetOpenTracing(openTracing bool)
-	AppProtectAgentStart(apaDone chan error, debug bool)
+	AppProtectAgentStart(apaDone chan error, logLevel string)
 	AppProtectAgentQuit()
 	AppProtectPluginStart(appDone chan error)
 	AppProtectPluginQuit()
+	AppProtectDosAgentStart(apdaDone chan error, debug bool, maxDaemon int, maxWorkers int, memory int)
+	AppProtectDosAgentQuit()
 }
 
 // LocalManager updates NGINX configuration, starts, reloads and quits NGINX,
@@ -99,6 +104,7 @@ type LocalManager struct {
 	OpenTracing                  bool
 	appProtectPluginPid          int
 	appProtectAgentPid           int
+	appProtectDosAgentPid        int
 }
 
 // NewLocalManager creates a LocalManager.
@@ -253,7 +259,7 @@ func (lm *LocalManager) DeleteAppProtectResourceFile(name string) {
 
 // ClearAppProtectFolder clears contents of a config folder
 func (lm *LocalManager) ClearAppProtectFolder(name string) {
-	files, err := ioutil.ReadDir(name)
+	files, err := os.ReadDir(name)
 	if err != nil {
 		glog.Fatalf("Failed to read the App Protect folder %s: %v", name, err)
 	}
@@ -267,7 +273,7 @@ func (lm *LocalManager) Start(done chan error) {
 	glog.V(3).Info("Starting nginx")
 
 	binaryFilename := getBinaryFileName(lm.debug)
-	cmd := exec.Command(binaryFilename)
+	cmd := exec.Command(binaryFilename, "-e", "stderr") // #nosec G204
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -294,7 +300,7 @@ func (lm *LocalManager) Reload(isEndpointsUpdate bool) error {
 	t1 := time.Now()
 
 	binaryFilename := getBinaryFileName(lm.debug)
-	if err := shellOut(fmt.Sprintf("%v -s %v", binaryFilename, "reload")); err != nil {
+	if err := shellOut(fmt.Sprintf("%v -s %v -e stderr", binaryFilename, "reload")); err != nil {
 		lm.metricsCollector.IncNginxReloadErrors()
 		return fmt.Errorf("nginx reload failed: %w", err)
 	}
@@ -450,20 +456,15 @@ func (lm *LocalManager) SetOpenTracing(openTracing bool) {
 }
 
 // AppProtectAgentStart starts the AppProtect agent
-func (lm *LocalManager) AppProtectAgentStart(apaDone chan error, debug bool) {
-	if debug {
-		glog.V(3).Info("Starting AppProtect Agent in debug mode")
-		err := os.Remove(appProtectLogConfigFileName)
-		if err != nil {
-			glog.Fatalf("Failed removing App Protect Log configuration file")
-		}
-		err = createFileAndWrite(appProtectLogConfigFileName, []byte(appProtectDebugLogConfigFileContent))
-		if err != nil {
-			glog.Fatalf("Failed Writing App Protect Log configuration file")
-		}
+func (lm *LocalManager) AppProtectAgentStart(apaDone chan error, logLevel string) {
+	glog.V(3).Info("Setting log level for App Protect - ", logLevel)
+	appProtectLogLevelCmdfull := fmt.Sprintf("%v %v", appProtectLogLevelCmd, logLevel)
+	logLevelCmd := exec.Command("sh", "-c", appProtectLogLevelCmdfull) // #nosec G204
+	if err := logLevelCmd.Run(); err != nil {
+		glog.Fatalf("Failed to set log level for AppProtect: %v", err)
 	}
-	glog.V(3).Info("Starting AppProtect Agent")
 
+	glog.V(3).Info("Starting AppProtect Agent")
 	cmd := exec.Command(appProtectAgentStartCmd)
 	if err := cmd.Start(); err != nil {
 		glog.Fatalf("Failed to start AppProtect Agent: %v", err)
@@ -510,6 +511,58 @@ func (lm *LocalManager) AppProtectPluginQuit() {
 	if err := shellOut(killcmd); err != nil {
 		glog.Fatalf("Failed to quit AppProtect Plugin: %v", err)
 	}
+}
+
+// AppProtectDosAgentQuit gracefully ends AppProtect Agent.
+func (lm *LocalManager) AppProtectDosAgentQuit() {
+	glog.V(3).Info("Quitting AppProtectDos Agent")
+	killcmd := fmt.Sprintf("kill %d", lm.appProtectDosAgentPid)
+	if err := shellOut(killcmd); err != nil {
+		glog.Fatalf("Failed to quit AppProtect Agent: %v", err)
+	}
+}
+
+// AppProtectDosAgentStart starts the AppProtectDos agent
+func (lm *LocalManager) AppProtectDosAgentStart(apdaDone chan error, debug bool, maxDaemon int, maxWorkers int, memory int) {
+	glog.V(3).Info("Starting AppProtectDos Agent")
+
+	// Perform installation by adminstall
+	appProtectDosAgentInstallCmdFull := appProtectDosAgentInstallCmd
+
+	if maxDaemon != 0 {
+		appProtectDosAgentInstallCmdFull += " -d " + strconv.Itoa(maxDaemon)
+	}
+
+	if maxWorkers != 0 {
+		appProtectDosAgentInstallCmdFull += " -w " + strconv.Itoa(maxWorkers)
+	}
+
+	if memory != 0 {
+		appProtectDosAgentInstallCmdFull += " -m " + strconv.Itoa(memory)
+	}
+
+	cmdInstall := exec.Command("sh", "-c", appProtectDosAgentInstallCmdFull)
+
+	if err := cmdInstall.Run(); err != nil {
+		glog.Fatalf("Failed to install AppProtectDos: %v", err)
+	}
+
+	// case debug add debug flag to admd
+	appProtectDosAgentCmd := appProtectDosAgentStartCmd
+	if debug {
+		appProtectDosAgentCmd = appProtectDosAgentStartDebugCmd
+	}
+
+	cmd := exec.Command("sh", "-c", appProtectDosAgentCmd)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stdout
+	if err := cmd.Start(); err != nil {
+		glog.Fatalf("Failed to start AppProtectDos Agent: %v", err)
+	}
+	lm.appProtectDosAgentPid = cmd.Process.Pid
+	go func() {
+		apdaDone <- cmd.Wait()
+	}()
 }
 
 func getBinaryFileName(debug bool) string {

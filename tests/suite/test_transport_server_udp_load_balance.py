@@ -10,14 +10,16 @@ from suite.resources_utils import (
     wait_for_event_increment,
 )
 from suite.custom_resources_utils import (
-    patch_ts,
+    patch_ts_from_yaml,
     read_ts,
     delete_ts,
     create_ts_from_yaml,
 )
 from settings import TEST_DATA
 
+
 @pytest.mark.ts
+@pytest.mark.skip_for_loadbalancer
 @pytest.mark.parametrize(
     "crd_ingress_controller, transport_server_setup",
     [
@@ -42,7 +44,7 @@ class TestTransportServerUdpLoadBalance:
         Function to revert a TransportServer resource to a valid state.
         """
         patch_src = f"{TEST_DATA}/transport-server-udp-load-balance/standard/transport-server.yaml"
-        patch_ts(
+        patch_ts_from_yaml(
             kube_apis.custom_objects,
             transport_server_setup.name,
             patch_src,
@@ -55,7 +57,8 @@ class TestTransportServerUdpLoadBalance:
         """
         The load balancing of UDP should result in 4 servers to match the 4 replicas of a service.
         """
-        original = scale_deployment(kube_apis.v1, kube_apis.apps_v1_api, "udp-service", transport_server_setup.namespace, 4)
+        original = scale_deployment(kube_apis.v1, kube_apis.apps_v1_api,
+                                    "udp-service", transport_server_setup.namespace, 4)
         num_servers = 0
         retry = 0
 
@@ -67,16 +70,17 @@ class TestTransportServerUdpLoadBalance:
                 transport_server_setup.ingress_pod_name,
                 ingress_controller_prerequisites.namespace
             )
-            
+
             pattern = 'server .*;'
             num_servers = len(re.findall(pattern, result_conf))
             retry += 1
             wait_before_test(1)
             print(f"Retry #{retry}")
-        
+
         assert num_servers is 4
 
-        scale_deployment(kube_apis.v1, kube_apis.apps_v1_api, "udp-service", transport_server_setup.namespace, original)
+        scale_deployment(kube_apis.v1, kube_apis.apps_v1_api, "udp-service",
+                         transport_server_setup.namespace, original)
         retry = 0
         while(num_servers is not original and retry <= 50):
             result_conf = get_ts_nginx_template_conf(
@@ -86,13 +90,13 @@ class TestTransportServerUdpLoadBalance:
                 transport_server_setup.ingress_pod_name,
                 ingress_controller_prerequisites.namespace
             )
-            
+
             pattern = 'server .*;'
             num_servers = len(re.findall(pattern, result_conf))
             retry += 1
             wait_before_test(1)
             print(f"Retry #{retry}")
-        
+
         assert num_servers is original
 
     def test_udp_request_load_balanced(
@@ -162,7 +166,7 @@ class TestTransportServerUdpLoadBalance:
         print(f'response: {endpoint}')
         client.close()
 
-        # Step 2, add a second TransportServer with the same port and confirm te collision
+        # Step 2, add a second TransportServer with the same port and confirm the collision
         transport_server_file = f"{TEST_DATA}/transport-server-udp-load-balance/second-transport-server.yaml"
         ts_resource = create_ts_from_yaml(
             kube_apis.custom_objects, transport_server_file, transport_server_setup.namespace
@@ -176,14 +180,15 @@ class TestTransportServerUdpLoadBalance:
             second_ts_name,
         )
         assert (
-                response["status"]
-                and response["status"]["reason"] == "Rejected"
-                and response["status"]["state"] == "Warning"
-                and response["status"]["message"] == "Listener udp-server is taken by another resource"
+            response["status"]
+            and response["status"]["reason"] == "Rejected"
+            and response["status"]["state"] == "Warning"
+            and response["status"]["message"] == "Listener udp-server is taken by another resource"
         )
 
         # Step 3, remove the default TransportServer with the same port
-        delete_ts(kube_apis.custom_objects, transport_server_setup.resource, transport_server_setup.namespace)
+        delete_ts(kube_apis.custom_objects, transport_server_setup.resource,
+                  transport_server_setup.namespace)
 
         wait_before_test()
         response = read_ts(
@@ -192,9 +197,9 @@ class TestTransportServerUdpLoadBalance:
             second_ts_name,
         )
         assert (
-                response["status"]
-                and response["status"]["reason"] == "AddedOrUpdated"
-                and response["status"]["state"] == "Valid"
+            response["status"]
+            and response["status"]["reason"] == "AddedOrUpdated"
+            and response["status"]["state"] == "Valid"
         )
 
         # Step 4, confirm load balancing is still working.
@@ -219,7 +224,7 @@ class TestTransportServerUdpLoadBalance:
             self, kube_apis, crd_ingress_controller, transport_server_setup, file
     ):
         patch_src = f"{TEST_DATA}/transport-server-udp-load-balance/{file}"
-        patch_ts(
+        patch_ts_from_yaml(
             kube_apis.custom_objects,
             transport_server_setup.name,
             patch_src,
@@ -259,7 +264,7 @@ class TestTransportServerUdpLoadBalance:
         # Step 1 - configure a passing health check
 
         patch_src = f"{TEST_DATA}/transport-server-udp-load-balance/passing-hc-transport-server.yaml"
-        patch_ts(
+        patch_ts_from_yaml(
             kube_apis.custom_objects,
             transport_server_setup.name,
             patch_src,
@@ -279,7 +284,7 @@ class TestTransportServerUdpLoadBalance:
 
         match = f"match_ts_{transport_server_setup.namespace}_transport-server_udp-app"
 
-        assert "health_check interval=5s port=3334" in result_conf
+        assert "health_check interval=5s" in result_conf
         assert f"passes=1 jitter=0s fails=1 udp match={match}" in result_conf
         assert "health_check_timeout 3s;"
         assert 'send "health"' in result_conf
@@ -294,7 +299,7 @@ class TestTransportServerUdpLoadBalance:
 
         retry = 0
         endpoints = {}
-        while(len(endpoints) is not 3 and retry <=30):
+        while(len(endpoints) is not 3 and retry <= 30):
             for i in range(20):
                 client = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
                 client.sendto("ping".encode('utf-8'), (host, port))
@@ -327,7 +332,7 @@ class TestTransportServerUdpLoadBalance:
         # Step 1 - configure a failing health check
 
         patch_src = f"{TEST_DATA}/transport-server-udp-load-balance/failing-hc-transport-server.yaml"
-        patch_ts(
+        patch_ts_from_yaml(
             kube_apis.custom_objects,
             transport_server_setup.name,
             patch_src,
@@ -345,7 +350,7 @@ class TestTransportServerUdpLoadBalance:
 
         match = f"match_ts_{transport_server_setup.namespace}_transport-server_udp-app"
 
-        assert "health_check interval=5s port=3334" in result_conf
+        assert "health_check interval=5s" in result_conf
         assert f"passes=1 jitter=0s fails=1 udp match={match}" in result_conf
         assert "health_check_timeout 3s;"
         assert 'send "health"' in result_conf

@@ -19,6 +19,7 @@ func createTestConfiguration() *Configuration {
 	}
 	isPlus := false
 	appProtectEnabled := false
+	appProtectDosEnabled := false
 	internalRoutesEnabled := false
 	isTLSPassthroughEnabled := true
 	snippetsEnabled := true
@@ -26,14 +27,16 @@ func createTestConfiguration() *Configuration {
 		lbc.HasCorrectIngressClass,
 		isPlus,
 		appProtectEnabled,
+		appProtectDosEnabled,
 		internalRoutesEnabled,
-		validation.NewVirtualServerValidator(isTLSPassthroughEnabled),
+		validation.NewVirtualServerValidator(isTLSPassthroughEnabled, appProtectDosEnabled),
 		validation.NewGlobalConfigurationValidator(map[int]bool{
 			80:  true,
 			443: true,
 		}),
 		validation.NewTransportServerValidator(isTLSPassthroughEnabled, snippetsEnabled, isPlus),
 		isTLSPassthroughEnabled,
+		snippetsEnabled,
 	)
 }
 
@@ -2392,7 +2395,7 @@ func TestAddGlobalConfiguration(t *testing.T) {
 
 	// Swap listeners
 
-	// We need to hanlde this case in Controller propoperly - update config for all TransportServers and reload once
+	// We need to handle this case in Controller propoperly - update config for all TransportServers and reload once
 	// to avoid any race conditions
 	// and errors like nginx: [emerg] duplicate "0.0.0.0:8888" address and port pair in /etc/nginx/nginx.conf:73
 
@@ -3045,23 +3048,23 @@ type testReferenceChecker struct {
 	onlyTransportServers    bool
 }
 
-func (rc *testReferenceChecker) IsReferencedByIngress(namespace string, name string, ing *networking.Ingress) bool {
+func (rc *testReferenceChecker) IsReferencedByIngress(namespace string, name string, _ *networking.Ingress) bool {
 	return rc.onlyIngresses && namespace == rc.resourceNamespace && name == rc.resourceName
 }
 
-func (rc *testReferenceChecker) IsReferencedByMinion(namespace string, name string, ing *networking.Ingress) bool {
+func (rc *testReferenceChecker) IsReferencedByMinion(namespace string, name string, _ *networking.Ingress) bool {
 	return rc.onlyMinions && namespace == rc.resourceNamespace && name == rc.resourceName
 }
 
-func (rc *testReferenceChecker) IsReferencedByVirtualServer(namespace string, name string, vs *conf_v1.VirtualServer) bool {
+func (rc *testReferenceChecker) IsReferencedByVirtualServer(namespace string, name string, _ *conf_v1.VirtualServer) bool {
 	return rc.onlyVirtualServers && namespace == rc.resourceNamespace && name == rc.resourceName
 }
 
-func (rc *testReferenceChecker) IsReferencedByVirtualServerRoute(namespace string, name string, vsr *conf_v1.VirtualServerRoute) bool {
+func (rc *testReferenceChecker) IsReferencedByVirtualServerRoute(namespace string, name string, _ *conf_v1.VirtualServerRoute) bool {
 	return rc.onlyVirtualServerRoutes && namespace == rc.resourceNamespace && name == rc.resourceName
 }
 
-func (rc *testReferenceChecker) IsReferencedByTransportServer(namespace string, name string, ts *conf_v1alpha1.TransportServer) bool {
+func (rc *testReferenceChecker) IsReferencedByTransportServer(namespace string, name string, _ *conf_v1alpha1.TransportServer) bool {
 	return rc.onlyTransportServers && namespace == rc.resourceNamespace && name == rc.resourceName
 }
 
@@ -3252,6 +3255,104 @@ func TestGetResources(t *testing.T) {
 	result = configuration.GetResourcesWithFilter(resourceFilter{TransportServers: true})
 	if diff := cmp.Diff(expected, result); diff != "" {
 		t.Errorf("GetResources() returned unexpected result (-want +got):\n%s", diff)
+	}
+}
+
+func TestGetTransportServerMetrics(t *testing.T) {
+	tsPass := createTestTLSPassthroughTransportServer("transportserver", "abc.example.com")
+	tsTCP := createTestTransportServer("transportserver-tcp", "tcp-7777", "TCP")
+	tsUDP := createTestTransportServer("transportserver-udp", "udp-7777", "UDP")
+
+	tests := []struct {
+		tses     []*conf_v1alpha1.TransportServer
+		expected *TransportServerMetrics
+		msg      string
+	}{
+		{
+			tses: nil,
+			expected: &TransportServerMetrics{
+				TotalTLSPassthrough: 0,
+				TotalTCP:            0,
+				TotalUDP:            0,
+			},
+			msg: "no TransportServers",
+		},
+		{
+			tses: []*conf_v1alpha1.TransportServer{
+				tsPass,
+			},
+			expected: &TransportServerMetrics{
+				TotalTLSPassthrough: 1,
+				TotalTCP:            0,
+				TotalUDP:            0,
+			},
+			msg: "one TLSPassthrough TransportServer",
+		},
+		{
+			tses: []*conf_v1alpha1.TransportServer{
+				tsTCP,
+			},
+			expected: &TransportServerMetrics{
+				TotalTLSPassthrough: 0,
+				TotalTCP:            1,
+				TotalUDP:            0,
+			},
+			msg: "one TCP TransportServer",
+		},
+		{
+			tses: []*conf_v1alpha1.TransportServer{
+				tsUDP,
+			},
+			expected: &TransportServerMetrics{
+				TotalTLSPassthrough: 0,
+				TotalTCP:            0,
+				TotalUDP:            1,
+			},
+			msg: "one UDP TransportServer",
+		},
+		{
+			tses: []*conf_v1alpha1.TransportServer{
+				tsPass, tsTCP, tsUDP,
+			},
+			expected: &TransportServerMetrics{
+				TotalTLSPassthrough: 1,
+				TotalTCP:            1,
+				TotalUDP:            1,
+			},
+			msg: "TLSPasstrough, TCP and UDP TransportServers",
+		},
+	}
+
+	listeners := []conf_v1alpha1.Listener{
+		{
+			Name:     "tcp-7777",
+			Port:     7777,
+			Protocol: "TCP",
+		},
+		{
+			Name:     "udp-7777",
+			Port:     7777,
+			Protocol: "UDP",
+		},
+	}
+	gc := createTestGlobalConfiguration(listeners)
+
+	for _, test := range tests {
+		configuration := createTestConfiguration()
+
+		_, _, err := configuration.AddOrUpdateGlobalConfiguration(gc)
+		if err != nil {
+			t.Fatalf("AddOrUpdateGlobalConfiguration() returned unexpected error %v", err)
+		}
+
+		for _, ts := range test.tses {
+			configuration.AddOrUpdateTransportServer(ts)
+		}
+
+		result := configuration.GetTransportServerMetrics()
+		if diff := cmp.Diff(test.expected, result); diff != "" {
+			t.Errorf("GetTransportServerMetrics() returned unexpected result for the case of %s (-want +got):\n%s", test.msg, diff)
+		}
 	}
 }
 

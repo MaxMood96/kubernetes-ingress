@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -69,6 +70,17 @@ var (
 	nginxPlus = flag.Bool("nginx-plus", false, "Enable support for NGINX Plus")
 
 	appProtect = flag.Bool("enable-app-protect", false, "Enable support for NGINX App Protect. Requires -nginx-plus.")
+
+	appProtectLogLevel = flag.String("app-protect-log-level", appProtectLogLevelDefault,
+		`Sets log level for App Protect. Allowed values: fatal, error, warn, info, debug, trace. Requires -nginx-plus and -enable-app-protect.`)
+
+	appProtectDos = flag.Bool("enable-app-protect-dos", false, "Enable support for NGINX App Protect dos. Requires -nginx-plus.")
+
+	appProtectDosDebug = flag.Bool("app-protect-dos-debug", false, "Enable debugging for App Protect Dos. Requires -nginx-plus and -enable-app-protect-dos.")
+
+	appProtectDosMaxDaemons = flag.Int("app-protect-dos-max-daemons", 0, "Max number of ADMD instances. Requires -nginx-plus and -enable-app-protect-dos.")
+	appProtectDosMaxWorkers = flag.Int("app-protect-dos-max-workers", 0, "Max number of nginx processes to support. Requires -nginx-plus and -enable-app-protect-dos.")
+	appProtectDosMemory     = flag.Int("app-protect-dos-memory", 0, "RAM memory size to consume in MB. Requires -nginx-plus and -enable-app-protect-dos.")
 
 	ingressClass = flag.String("ingress-class", "nginx",
 		`A class of the Ingress controller.
@@ -134,8 +146,8 @@ var (
 		`The timeout in milliseconds which the Ingress Controller will wait for a successful NGINX reload after a change or at the initial start. (default 60000)`)
 
 	wildcardTLSSecret = flag.String("wildcard-tls-secret", "",
-		`A Secret with a TLS certificate and key for TLS termination of every Ingress host for which TLS termination is enabled but the Secret is not specified.
-		Format: <namespace>/<name>. If the argument is not set, for such Ingress hosts NGINX will break any attempt to establish a TLS connection.
+		`A Secret with a TLS certificate and key for TLS termination of every Ingress/VirtualServer host for which TLS termination is enabled but the Secret is not specified.
+		Format: <namespace>/<name>. If the argument is not set, for such Ingress/VirtualServer hosts NGINX will break any attempt to establish a TLS connection.
 		If the argument is set, but the Ingress controller is not able to fetch the Secret from Kubernetes API, the Ingress controller will fail to start.`)
 
 	enablePrometheusMetrics = flag.Bool("enable-prometheus-metrics", false,
@@ -154,7 +166,7 @@ var (
 		"Enable preview policies")
 
 	enableSnippets = flag.Bool("enable-snippets", false,
-		"Enable custom NGINX configuration snippets in VirtualServer, VirtualServerRoute and TransportServer resources.")
+		"Enable custom NGINX configuration snippets in Ingress, VirtualServer, VirtualServerRoute and TransportServer resources.")
 
 	globalConfiguration = flag.String("global-configuration", "",
 		`The namespace/name of the GlobalConfiguration resource for global configuration of the Ingress Controller. Requires -enable-custom-resources. Format: <namespace>/<name>`)
@@ -187,7 +199,7 @@ func main() {
 		glog.Fatalf("Error setting logtostderr to true: %v", err)
 	}
 
-	versionInfo := fmt.Sprintf("Version=%v GitCommit=%v Date=%v", version, commit, date)
+	versionInfo := fmt.Sprintf("Version=%v GitCommit=%v Date=%v Arch=%v/%v", version, commit, date, runtime.GOOS, runtime.GOARCH)
 	if *versionFlag {
 		fmt.Println(versionInfo)
 		os.Exit(0)
@@ -239,6 +251,37 @@ func main() {
 		glog.Fatal("NGINX App Protect support is for NGINX Plus only")
 	}
 
+	if *appProtectLogLevel != appProtectLogLevelDefault && !*appProtect && !*nginxPlus {
+		glog.Fatal("app-protect-log-level support is for NGINX Plus only and App Protect is enable")
+	}
+
+	if *appProtectLogLevel != appProtectLogLevelDefault && *appProtect && *nginxPlus {
+		logLevelValidationError := validateAppProtectLogLevel(*appProtectLogLevel)
+		if logLevelValidationError != nil {
+			glog.Fatalf("Invalid value for app-protect-log-level: %v", *appProtectLogLevel)
+		}
+	}
+
+	if *appProtectDos && !*nginxPlus {
+		glog.Fatal("NGINX App Protect Dos support is for NGINX Plus only")
+	}
+
+	if *appProtectDosDebug && !*appProtectDos && !*nginxPlus {
+		glog.Fatal("NGINX App Protect Dos debug support is for NGINX Plus only and App Protect Dos is enable")
+	}
+
+	if *appProtectDosMaxDaemons != 0 && !*appProtectDos && !*nginxPlus {
+		glog.Fatal("NGINX App Protect Dos max daemons support is for NGINX Plus only and App Protect Dos is enable")
+	}
+
+	if *appProtectDosMaxWorkers != 0 && !*appProtectDos && !*nginxPlus {
+		glog.Fatal("NGINX App Protect Dos max workers support is for NGINX Plus and App Protect Dos is enable")
+	}
+
+	if *appProtectDosMemory != 0 && !*appProtectDos && !*nginxPlus {
+		glog.Fatal("NGINX App Protect Dos memory support is for NGINX Plus and App Protect Dos is enable")
+	}
+
 	if *spireAgentAddress != "" && !*nginxPlus {
 		glog.Fatal("spire-agent-address support is for NGINX Plus only")
 	}
@@ -283,6 +326,7 @@ func main() {
 	if err != nil {
 		glog.Fatalf("error retrieving k8s version: %v", err)
 	}
+	glog.Infof("Kubernetes version: %v", k8sVersion)
 
 	minK8sVersion, err := util_version.ParseGeneric("1.19.0")
 	if err != nil {
@@ -303,7 +347,7 @@ func main() {
 	}
 
 	var dynClient dynamic.Interface
-	if *appProtect || *ingressLink != "" {
+	if *appProtectDos || *appProtect || *ingressLink != "" {
 		dynClient, err = dynamic.NewForConfig(config)
 		if err != nil {
 			glog.Fatalf("Failed to create dynamic client: %v.", err)
@@ -419,8 +463,15 @@ func main() {
 		aPPluginDone = make(chan error, 1)
 		aPAgentDone = make(chan error, 1)
 
-		nginxManager.AppProtectAgentStart(aPAgentDone, *nginxDebug)
+		nginxManager.AppProtectAgentStart(aPAgentDone, *appProtectLogLevel)
 		nginxManager.AppProtectPluginStart(aPPluginDone)
+	}
+
+	var aPPDosAgentDone chan error
+
+	if *appProtectDos {
+		aPPDosAgentDone = make(chan error, 1)
+		nginxManager.AppProtectDosAgentStart(aPPDosAgentDone, *appProtectDosDebug, *appProtectDosMaxDaemons, *appProtectDosMaxWorkers, *appProtectDosMemory)
 	}
 
 	var sslRejectHandshake bool
@@ -476,7 +527,7 @@ func main() {
 		}
 	}
 
-	cfgParams := configs.NewDefaultConfigParams()
+	cfgParams := configs.NewDefaultConfigParams(*nginxPlus)
 
 	if *nginxConfigMaps != "" {
 		ns, name, err := k8s.ParseNamespaceName(*nginxConfigMaps)
@@ -487,7 +538,7 @@ func main() {
 		if err != nil {
 			glog.Fatalf("Error when getting %v: %v", *nginxConfigMaps, err)
 		}
-		cfgParams = configs.ParseConfigMap(cfm, *nginxPlus, *appProtect)
+		cfgParams = configs.ParseConfigMap(cfm, *nginxPlus, *appProtect, *appProtectDos)
 		if cfgParams.MainServerSSLDHParamFileContent != nil {
 			fileName, err := nginxManager.CreateDHParam(*cfgParams.MainServerSSLDHParamFileContent)
 			if err != nil {
@@ -520,6 +571,7 @@ func main() {
 		EnableSnippets:                 *enableSnippets,
 		NginxServiceMesh:               *spireAgentAddress != "",
 		MainAppProtectLoadModule:       *appProtect,
+		MainAppProtectDosLoadModule:    *appProtectDos,
 		EnableLatencyMetrics:           *enableLatencyMetrics,
 		EnablePreviewPolicies:          *enablePreviewPolicies,
 		SSLRejectHandshake:             sslRejectHandshake,
@@ -605,7 +657,7 @@ func main() {
 	controllerNamespace := os.Getenv("POD_NAMESPACE")
 
 	transportServerValidator := cr_validation.NewTransportServerValidator(*enableTLSPassthrough, *enableSnippets, *nginxPlus)
-	virtualServerValidator := cr_validation.NewVirtualServerValidator(*nginxPlus)
+	virtualServerValidator := cr_validation.NewVirtualServerValidator(*nginxPlus, *appProtectDos)
 
 	lbcInput := k8s.NewLoadBalancerControllerInput{
 		KubeClient:                   kubeClient,
@@ -616,6 +668,7 @@ func main() {
 		NginxConfigurator:            cnf,
 		DefaultServerSecret:          *defaultServerSecret,
 		AppProtectEnabled:            *appProtect,
+		AppProtectDosEnabled:         *appProtectDos,
 		IsNginxPlus:                  *nginxPlus,
 		IngressClass:                 *ingressClass,
 		ExternalServiceName:          *externalService,
@@ -638,6 +691,7 @@ func main() {
 		IsPrometheusEnabled:          *enablePrometheusMetrics,
 		IsLatencyMetricsEnabled:      *enableLatencyMetrics,
 		IsTLSPassthroughEnabled:      *enableTLSPassthrough,
+		SnippetsEnabled:              *enableSnippets,
 	}
 
 	lbc := k8s.NewLoadBalancerController(lbcInput)
@@ -651,8 +705,8 @@ func main() {
 		}()
 	}
 
-	if *appProtect {
-		go handleTerminationWithAppProtect(lbc, nginxManager, syslogListener, nginxDone, aPAgentDone, aPPluginDone)
+	if *appProtect || *appProtectDos {
+		go handleTerminationWithAppProtect(lbc, nginxManager, syslogListener, nginxDone, aPAgentDone, aPPluginDone, aPPDosAgentDone, *appProtect, *appProtectDos)
 	} else {
 		go handleTermination(lbc, nginxManager, syslogListener, nginxDone)
 	}
@@ -743,6 +797,23 @@ func validatePort(port int) error {
 	return nil
 }
 
+const appProtectLogLevelDefault = "fatal"
+
+// validateAppProtectLogLevel makes sure a given logLevel is one of the allowed values
+func validateAppProtectLogLevel(logLevel string) error {
+	switch strings.ToLower(logLevel) {
+	case
+		"fatal",
+		"error",
+		"warn",
+		"info",
+		"debug",
+		"trace":
+		return nil
+	}
+	return fmt.Errorf("invalid App Protect log level: %v", logLevel)
+}
+
 // parseNginxStatusAllowCIDRs converts a comma separated CIDR/IP address string into an array of CIDR/IP addresses.
 // It returns an array of the valid CIDR/IP addresses or an error if given an invalid address.
 func parseNginxStatusAllowCIDRs(input string) (cidrs []string, err error) {
@@ -810,7 +881,7 @@ func validateLocation(location string) error {
 	return nil
 }
 
-func handleTerminationWithAppProtect(lbc *k8s.LoadBalancerController, nginxManager nginx.Manager, listener metrics.SyslogListener, nginxDone, agentDone, pluginDone chan error) {
+func handleTerminationWithAppProtect(lbc *k8s.LoadBalancerController, nginxManager nginx.Manager, listener metrics.SyslogListener, nginxDone, agentDone, pluginDone, agentDosDone chan error, appProtectEnabled, appProtectDosEnabled bool) {
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, syscall.SIGTERM)
 
@@ -821,15 +892,23 @@ func handleTerminationWithAppProtect(lbc *k8s.LoadBalancerController, nginxManag
 		glog.Fatalf("AppProtectPlugin command exited unexpectedly with status: %v", err)
 	case err := <-agentDone:
 		glog.Fatalf("AppProtectAgent command exited unexpectedly with status: %v", err)
+	case err := <-agentDosDone:
+		glog.Fatalf("AppProtectDosAgent command exited unexpectedly with status: %v", err)
 	case <-signalChan:
 		glog.Infof("Received SIGTERM, shutting down")
 		lbc.Stop()
 		nginxManager.Quit()
 		<-nginxDone
-		nginxManager.AppProtectPluginQuit()
-		<-pluginDone
-		nginxManager.AppProtectAgentQuit()
-		<-agentDone
+		if appProtectEnabled {
+			nginxManager.AppProtectPluginQuit()
+			<-pluginDone
+			nginxManager.AppProtectAgentQuit()
+			<-agentDone
+		}
+		if appProtectDosEnabled {
+			nginxManager.AppProtectDosAgentQuit()
+			<-agentDosDone
+		}
 		listener.Stop()
 	}
 	glog.Info("Exiting successfully")
