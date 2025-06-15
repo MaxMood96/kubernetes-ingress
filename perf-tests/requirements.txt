@@ -1,5 +1,5 @@
 PyYAML==5.4.1
-requests==2.26.0
+requests==2.32.4
 kubernetes==18.20.0
 pytest==4.4.1
 ipaddress==1.0.23 # >= 1.0.17
@@ -9,3 +9,4 @@ urllib3==1.26.6
 pytest-html==3.1.1
 pytest-repeat==0.9.1
 locust==2.1.0
+flask-cors>=6.0.0 # not directly required, pinned by Snyk to avoid a vulnerability
